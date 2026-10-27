@@ -52,31 +52,35 @@ def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     return float(spearmanr(a, b).statistic)
 
 
-def _bootstrap_rho(y: np.ndarray, pred: np.ndarray, n_boot: int, seed: int) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    idx = rng.integers(0, len(y), size=(n_boot, len(y)))
-    return np.array([_spearman(y[i], pred[i]) for i in idx])
+def _mean_rho(y: np.ndarray, preds: np.ndarray) -> float:
+    """Spearman rho averaged over repeats; preds is (repeats, n) or (n,)."""
+    preds = np.atleast_2d(preds)
+    return float(np.mean([_spearman(y, p) for p in preds]))
+
+
+def _bootstrap_indices(n: int, n_boot: int, seed: int) -> np.ndarray:
+    return np.random.default_rng(seed).integers(0, n, size=(n_boot, n))
 
 
 def repeated_cv(X, y, groups, n_repeats: int = 10, n_boot: int = 2000) -> dict:
     """Repeat cross-validation with different fold assignments.
 
-    The spread across repeats shows how much the result depends on how the
-    folds happened to fall. The confidence interval answers a different
-    question: how much the result depends on which antibodies were measured.
-    It bootstraps antibodies, using each antibody's prediction averaged over
-    the repeats.
+    The reported rho is the mean of the per-repeat Spearman correlations. The
+    confidence interval bootstraps antibodies and recomputes that same
+    quantity on each resample, so the interval and the point estimate measure
+    the same thing. It keeps the fitted predictions fixed and resamples single
+    antibodies, so it shows sampling noise in the evaluation set, not the full
+    uncertainty of refitting on a new dataset.
     """
     y = np.asarray(y, dtype=float)
-    preds = np.array([oof_predict(X, y, fold_ids(len(y), groups, seed)) for seed in range(n_repeats)])
-    rhos = np.array([_spearman(y, p) for p in preds])
-    mean_oof = preds.mean(axis=0)
-    boot = _bootstrap_rho(y, mean_oof, n_boot, seed=0)
+    oof = np.array([oof_predict(X, y, fold_ids(len(y), groups, seed)) for seed in range(n_repeats)])
+    rhos = np.array([_spearman(y, p) for p in oof])
+    boot = np.array([_mean_rho(y[i], oof[:, i]) for i in _bootstrap_indices(len(y), n_boot, seed=0)])
     return {
         "rho_per_repeat": rhos,
         "rho_mean": float(rhos.mean()),
         "rho_sd": float(rhos.std(ddof=1)) if n_repeats > 1 else 0.0,
-        "mean_oof": mean_oof,
+        "oof": oof,
         "ci_low": float(np.percentile(boot, 2.5)),
         "ci_high": float(np.percentile(boot, 97.5)),
     }
@@ -98,18 +102,25 @@ def permutation_pvalue(X, y, groups, observed: float, n_perm: int = 200, seed: i
     return (1 + hits) / (1 + n_perm)
 
 
-def paired_bootstrap(y, pred_a, pred_b, n_boot: int = 2000, seed: int = 0):
+def paired_bootstrap(y, preds_a, preds_b, n_boot: int = 2000, seed: int = 0):
     """Compare two predictors on the same antibodies.
 
-    Resampling the same antibodies for both predictors keeps the comparison
-    paired. Returns (rho_a - rho_b, ci_low, ci_high, two-sided p).
+    preds_a and preds_b are out-of-fold predictions, (repeats, n) or (n,).
+    Resampling the same antibodies for both keeps the comparison paired.
+    Returns (rho_a - rho_b, ci_low, ci_high, p). The p-value inverts the
+    bootstrap interval: twice the share of resampled differences on the
+    other side of zero. With n_boot resamples it cannot be resolved below
+    1/n_boot, so it is reported as at least that.
     """
-    y, pred_a, pred_b = (np.asarray(v, dtype=float) for v in (y, pred_a, pred_b))
-    rng = np.random.default_rng(seed)
-    idx = rng.integers(0, len(y), size=(n_boot, len(y)))
-    diffs = np.array([_spearman(y[i], pred_a[i]) - _spearman(y[i], pred_b[i]) for i in idx])
-    delta = _spearman(y, pred_a) - _spearman(y, pred_b)
-    p = min(1.0, 2 * min((diffs <= 0).mean(), (diffs >= 0).mean()))
+    y = np.asarray(y, dtype=float)
+    preds_a, preds_b = np.atleast_2d(preds_a), np.atleast_2d(preds_b)
+    diffs = np.array(
+        [_mean_rho(y[i], preds_a[:, i]) - _mean_rho(y[i], preds_b[:, i])
+         for i in _bootstrap_indices(len(y), n_boot, seed)]
+    )
+    delta = _mean_rho(y, preds_a) - _mean_rho(y, preds_b)
+    p = 2 * min((diffs <= 0).mean(), (diffs >= 0).mean())
+    p = min(1.0, max(p, 1 / n_boot))
     return delta, float(np.percentile(diffs, 2.5)), float(np.percentile(diffs, 97.5)), float(p)
 
 

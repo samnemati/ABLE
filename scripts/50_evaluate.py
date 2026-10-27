@@ -16,7 +16,7 @@ import pandas as pd
 
 from able.data import ASSAYS, load_jain
 from able.embeddings import load_cache
-from able.encodings import aligned_positions, identity_groups, onehot_aligned
+from able.encodings import aligned_positions, identity_groups, identity_matrix, onehot_aligned
 from able.evaluate import holm, paired_bootstrap, permutation_pvalue, repeated_cv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,15 +51,20 @@ X = {
 groups = identity_groups(maps, min_identity=0.8)
 sizes = np.bincount(groups)[1:]
 pd.DataFrame({"name": names, "group": groups}).to_csv(OUT / "t_stage2_groups.csv", index=False)
-print(f"Identity groups (>= 0.8): {len(sizes)} groups, largest {sizes.max()}, singletons {(sizes == 1).sum()}")
+ident = identity_matrix(maps)
+cross_max = ident[groups[:, None] != groups[None, :]].max()
+print(
+    f"Identity groups (>= 0.8, single linkage): {len(sizes)} groups, largest {sizes.max()}, "
+    f"singletons {(sizes == 1).sum()}, max identity across groups {cross_max:.3f}"
+)
 
-rows, mean_oof = [], {}
+rows, oof = [], {}
 for rep in REPRESENTATIONS:
     for assay in ASSAYS:
         y = df[assay].to_numpy(dtype=float)
         for split, split_groups in (("random", None), ("grouped", groups)):
             result = repeated_cv(X[rep], y, split_groups)
-            mean_oof[(rep, assay, split)] = result["mean_oof"]
+            oof[(rep, assay, split)] = result["oof"]
             row = {
                 "representation": rep,
                 "assay": assay,
@@ -87,7 +92,7 @@ for rep in ["onehot", "esm2", "ablang2"]:
     for assay in HEADLINE:
         y = df[assay].to_numpy(dtype=float)
         delta, lo, hi, p = paired_bootstrap(
-            y, mean_oof[(rep, assay, "grouped")], mean_oof[("baseline", assay, "grouped")]
+            y, oof[(rep, assay, "grouped")], oof[("baseline", assay, "grouped")]
         )
         comparisons.append(
             {"representation": rep, "assay": assay, "delta_rho": delta, "ci_low": lo, "ci_high": hi, "p": p}

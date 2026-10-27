@@ -83,7 +83,7 @@ long in every antibody here, so it is left out.
 ## Stage 2: protein language models
 
 **Question.** Do learned representations of the sequence predict developability better than the
-simple features from stage 1, once the evaluation stops near-relatives from sitting in both
+simple features from stage 1, once the evaluation stops close relatives from sitting in both
 training and test?
 
 **Four representations of each antibody** ([able/encodings.py](able/encodings.py),
@@ -96,61 +96,89 @@ training and test?
 | ESM-2 650M | General protein language model; VH and VL embedded separately, mean-pooled, joined | 2,560 |
 | AbLang2 | Antibody language model trained on paired heavy and light chains | 480 |
 
+ESM-2 embeddings were computed on an Apple GPU (MPS) and cached; recomputing on a CPU can change
+them in the last decimal places.
+
 **Model and evaluation** ([able/evaluate.py](able/evaluate.py)):
-- Ridge regression on standardized features. Both the scaler and the regularization strength are
+- Ridge regression on standardized features. The scaler and the regularization strength are both
   fit inside each training fold, so the cross-validation is nested.
-- 5-fold cross-validation, repeated 10 times, scored by Spearman rho on out-of-fold predictions.
-- 95% confidence intervals come from bootstrapping antibodies.
-- Permutation p-values (200 label shuffles) for the four headline assays.
-- Each learned representation is compared with the baseline features by paired bootstrap,
-  Holm-corrected across the 12 comparisons.
+- 5-fold cross-validation repeated 10 times. The score is the mean over repeats of the Spearman
+  rho between out-of-fold predictions and measurements.
+- 95% confidence intervals bootstrap antibodies and recompute that same mean rho. The predictions
+  stay fixed during resampling, so the intervals capture sampling noise in the evaluation set,
+  not the full cost of refitting on new data.
+- Permutation p-values (200 label shuffles) for the headline assays.
+- Each learned representation is compared with the baseline features by paired bootstrap on the
+  same mean rho, Holm-corrected across the 12 comparisons. With 2,000 resamples, a raw p-value
+  cannot be resolved below 0.0005, so it is reported as at least that.
 - The headline assays were fixed before any results, one per property family: HIC
   (hydrophobicity), AC-SINS (self-interaction), PSR (polyreactivity) and Fab Tm (stability).
 
-**Splits that respect sequence similarity.** Antibodies are grouped by sequence identity over
-IMGT-aligned positions (average linkage, identity of 0.8 or more), and grouped cross-validation
-keeps each group on one side of every split. This gives 86 groups, the largest with 10 antibodies.
-The identity analysis itself was informative: the CDRs of these clinical antibodies are nearly
-all distinct, with a median pairwise CDR identity of 0.31, while their frameworks are shared,
-with a median full-Fv identity of 0.60. Close relatives here are mostly antibodies built on
-similar germline frameworks, not copies of the same binder.
+**Splits that respect sequence similarity.** Pairwise sequence identity is computed over
+IMGT-aligned positions of both chains. Antibodies are grouped by single-linkage clustering at an
+identity of 0.8, which guarantees that no two antibodies in different groups are 80% identical or
+more. The maximum identity across groups is 0.799. Grouped cross-validation keeps each group on
+one side of every split. This gives 61 groups. The largest holds 39 antibodies, because single
+linkage chains relatives of relatives together, and 48 antibodies form groups of their own.
+
+The identity analysis was itself informative. The CDRs of these clinical antibodies are nearly
+all distinct (median pairwise CDR identity 0.31), while their frameworks are shared (median
+full-Fv identity 0.60). Close relatives here are mostly antibodies built on similar germline
+frameworks, not copies of the same binder.
 
 ![Headline results](outputs/f_stage2_headline.png)
 
 **Results (grouped CV).**
-- **Stability: clear gain from language models.** Simple features do not predict Fab melting
-  temperature (rho = -0.13, 95% CI -0.31 to 0.02). AbLang2 reaches rho = 0.45 (0.32 to 0.61) and
-  ESM-2 rho = 0.23 (0.07 to 0.41). Both improvements over the baseline survive Holm correction
-  (AbLang2 +0.61, ESM-2 +0.39, adjusted p < 0.001). Stability depends on how the whole domain
-  packs, which charge and loop length do not capture.
-- **Hydrophobicity, self-interaction, polyreactivity: no clear gain.** On HIC, AC-SINS and PSR,
-  ESM-2 and AbLang2 score higher than the baseline features: for example, AbLang2 rho = 0.41
-  against 0.26 on AC-SINS, and ESM-2 0.35 against 0.26 on PSR. None of these differences
-  survives correction (smallest adjusted p = 0.58). These properties are largely surface charge
-  and hydrophobicity, which the simple features already describe.
-- **One-hot is the weakest learned representation.** Its best grouped result is HIC rho = 0.15.
-  With about 110 training antibodies and 5,292 sparse columns, ridge has little to learn from.
+- **Stability: a clear gain from language models.** The simple features do not predict Fab
+  melting temperature (rho = -0.03, 95% CI -0.17 to 0.10). AbLang2 reaches rho = 0.47 (0.34 to
+  0.60) and ESM-2 0.31 (0.15 to 0.45). Both improvements over the baseline survive Holm correction
+  (AbLang2 +0.51, ESM-2 +0.34, adjusted p = 0.006 for each, the smallest value this test can
+  give). Stability depends on how the whole domain packs, which charge and loop length do not
+  capture.
+- **Hydrophobicity, self-interaction, polyreactivity: no gain that survives correction.**
+  - AbLang2 scores rho = 0.41 against 0.24 for the baseline on AC-SINS (difference +0.17, raw
+    p = 0.044, adjusted p = 0.40).
+  - ESM-2 scores 0.32 against 0.21 on PSR.
+  - On HIC all four representations sit between 0.15 and 0.23.
 
-Fifteen of the 16 headline models beat shuffled labels (permutation p of 0.05 or less); the exception is the baseline
-features on Fab Tm (p = 0.55). The smallest possible p with 200 shuffles is 0.005. The full
-12-assay table, including the flagged SGAC-SINS and CSI-BLI rows, is in
-[`outputs/t_stage2_results.csv`](outputs/t_stage2_results.csv) and is exploratory. The paired
-comparisons are in [`outputs/t_stage2_comparisons.csv`](outputs/t_stage2_comparisons.csv).
+  These properties are largely surface charge and hydrophobicity, which the simple features
+  already describe.
+- **One-hot is the weakest learned representation.** Its best headline result is Fab Tm
+  (rho = 0.16). With about 110 training antibodies and 5,292 sparse columns, ridge has little to
+  learn from.
+
+Fourteen of the 16 headline models beat shuffled labels (permutation p of 0.05 or less). The two
+exceptions are the baseline features on Fab Tm (p = 0.28) and one-hot on PSR (p = 0.065). One-hot
+on HIC sits at the boundary (p = 0.05, CI -0.002 to 0.28). With 200 shuffles the smallest possible
+p is 0.005. The full 12-assay table is in
+[`outputs/t_stage2_results.csv`](outputs/t_stage2_results.csv) and is exploratory. It includes the
+flagged SGAC-SINS and CSI-BLI rows. The paired comparisons are in
+[`outputs/t_stage2_comparisons.csv`](outputs/t_stage2_comparisons.csv).
 
 ![Random vs grouped](outputs/f_stage2_random_vs_grouped.png)
 
-**Random vs grouped cross-validation.** Grouping lowers scores most where a representation can
-memorize framework identity. One-hot on Fab Tm drops from rho = 0.26 to 0.10, and on HIC from
-0.28 to 0.15. ESM-2 on Fab Tm drops from 0.32 to 0.23. For AbLang2 and for the baseline features
-the change is small. Some scores rise slightly under grouping, which is within the repeat-to-repeat
-noise. With CDRs this diverse, random splits in this dataset leak framework information rather
-than near-identical binders. A dataset with engineered variants of the same antibody would leak
-far more.
+**Random vs grouped cross-validation.** The assay most inflated by random splits is HIC. Under
+grouping, every representation drops:
 
-**Limitations.** 137 antibodies, one lab, one linear model. The confidence intervals are wide, and
-a difference of 0.1 in rho is within them for most assays. A nonlinear model, or fine-tuning the
-language models, could change the picture. Fine-tuning would also need far more data than 137
-antibodies to do safely.
+| Representation | Random | Grouped |
+|---|---|---|
+| ESM-2 | 0.31 | 0.19 |
+| AbLang2 | 0.36 | 0.23 |
+| One-hot | 0.28 | 0.15 |
+| Baseline | 0.21 | 0.15 |
+
+Hydrophobicity seems to run partly in framework families, so a random split lets a model score
+by recognizing the family. One-hot on Fab Tm also drops, from 0.26 to 0.16. Most other headline
+scores change by a few hundredths, comparable to the spread between repeats. The stability result
+holds up under grouping (AbLang2 0.49 to 0.47, ESM-2 0.32 to 0.31).
+
+**Limitations.**
+- 137 antibodies, one lab, and one linear model.
+- The confidence intervals are wide, and a difference of 0.1 in rho falls inside them for most
+  assays.
+- The largest identity group holds 39 antibodies, so the grouped folds are unequal in size.
+- A nonlinear model, or fine-tuning the language models, could change the picture. Doing either
+  safely would need far more than 137 antibodies.
 
 ## Status
 

@@ -71,10 +71,14 @@ def identity_matrix(maps: list[dict]) -> np.ndarray:
 def identity_groups(maps: list[dict], min_identity: float = 0.8) -> np.ndarray:
     """Cluster antibodies so that close relatives share a group label.
 
-    Average-linkage clustering on (1 - identity), cut so that groups hold
-    antibodies at roughly min_identity or more. Cross-validation then keeps
-    each group entirely in train or entirely in test.
+    Single-linkage clustering on (1 - identity): any two antibodies at
+    min_identity or more always end up in the same group, so no pair that
+    close can straddle a train/test split. (Average linkage only bounds the
+    average identity between groups and lets close pairs through.) The cost
+    is chaining: relatives of relatives join one group, so groups can be big.
     """
     distance = 1 - identity_matrix(maps)
-    tree = linkage(squareform(distance, checks=False), "average")
-    return fcluster(tree, 1 - min_identity, criterion="distance")
+    # fcluster merges at distance <= cutoff; the tiny margin absorbs float
+    # rounding so a pair at exactly min_identity is always merged.
+    tree = linkage(squareform(distance, checks=False), "single")
+    return fcluster(tree, 1 - min_identity + 1e-9, criterion="distance")

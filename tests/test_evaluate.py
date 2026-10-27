@@ -51,3 +51,22 @@ def test_paired_bootstrap_detects_better_predictor():
     assert delta > 0
     assert ci_low > 0
     assert p < 0.05
+
+
+def test_ci_brackets_reported_rho():
+    result = repeated_cv(X, SIGNAL + RNG.normal(size=N), GROUPS, n_repeats=5)
+    assert result["ci_low"] <= result["rho_mean"] <= result["ci_high"]
+
+
+def test_paired_delta_matches_reported_rhos():
+    y = SIGNAL + RNG.normal(size=N)
+    a = repeated_cv(X, y, GROUPS, n_repeats=3)
+    b = repeated_cv(X[:, 1:], y, GROUPS, n_repeats=3)
+    delta, _, _, _ = paired_bootstrap(y, a["oof"], b["oof"])
+    assert delta == pytest.approx(a["rho_mean"] - b["rho_mean"])
+
+
+def test_paired_p_never_reported_as_zero():
+    good = SIGNAL + 0.01 * RNG.normal(size=N)
+    _, _, _, p = paired_bootstrap(SIGNAL, good, RNG.normal(size=N), n_boot=500)
+    assert p == pytest.approx(1 / 500)
