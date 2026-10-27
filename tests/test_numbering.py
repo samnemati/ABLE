@@ -64,3 +64,23 @@ def test_swapped_chains_raise(jain):
     row = jain.loc["trastuzumab"]
     with pytest.raises(ValueError):
         number_antibody(row["vl"], row["vh"], "trastuzumab")
+
+
+# Real-world sequences sometimes carry a signal peptide in front or part of
+# the constant domain behind. ANARCI numbers only the variable domain and
+# drops the rest, so number_antibody must refuse rather than return regions
+# that no longer match the sequence the features are computed from.
+LEADER = "MGWSCIILFLVATATGVHS"
+CH1_START = "ASTKGPSVFPLAPSSKSTSGGTAALGCLVKDYFPEPVTVSWNSGALTSGVHTFPAVLQSSGLYSLSSVVTVPSSSLGTQTYICNVNHKPSNTKVDKKV"
+
+
+def test_extra_residues_outside_variable_domain_raise(jain):
+    row = jain.loc["trastuzumab"]
+    with pytest.raises(ValueError, match="trastuzumab"):
+        number_antibody(LEADER + row["vh"] + CH1_START, row["vl"], "trastuzumab")
+
+
+def test_truncated_variable_domain_raises(jain):
+    row = jain.loc["trastuzumab"]
+    with pytest.raises(ValueError, match="trastuzumab"):
+        number_antibody(row["vh"][30:], row["vl"], "trastuzumab")

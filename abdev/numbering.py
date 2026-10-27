@@ -70,6 +70,20 @@ def number_antibody(vh: str, vl: str, name: str) -> dict[str, str]:
             raise ValueError(
                 f"{name}: expected a {expected_type} chain, ANARCI found {chain_type}"
             )
-        for region, residues in extract_regions(numbered).items():
+        chain_regions = extract_regions(numbered)
+        # ANARCI numbers only the variable domain and silently drops anything
+        # around it (a signal peptide, part of a constant domain), and a
+        # truncated chain can lose part of a CDR. Features are computed from
+        # the raw sequence, so the regions must cover exactly that sequence.
+        if "".join(chain_regions.values()) != seq:
+            raise ValueError(
+                f"{name}: numbered {prefix} regions do not cover the input sequence; "
+                "trim it to the variable domain"
+            )
+        empty = [region for region, residues in chain_regions.items()
+                 if region.startswith("CDR") and not residues]
+        if empty:
+            raise ValueError(f"{name}: empty {prefix} {', '.join(empty)}")
+        for region, residues in chain_regions.items():
             regions[f"{prefix}_{region}"] = residues
     return regions
