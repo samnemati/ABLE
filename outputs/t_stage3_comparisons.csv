@@ -1,0 +1,9 @@
+representation,assay,delta_rho,ci_low,ci_high,p,p_holm
+surface,hic,0.3887,0.2288,0.5536,0.0005,0.0040
+surface,acsins,-0.2560,-0.4002,-0.1093,0.0020,0.0120
+surface,psr,0.0676,-0.0587,0.1931,0.2990,0.5860
+surface,fab_tm,0.0961,-0.0812,0.2712,0.2930,0.5860
+baseline+surface,hic,0.2625,0.1739,0.3583,0.0005,0.0040
+baseline+surface,acsins,-0.0499,-0.1110,0.0085,0.1010,0.4040
+baseline+surface,psr,0.0491,-0.0131,0.1117,0.1280,0.4040
+baseline+surface,fab_tm,0.1428,0.0467,0.2309,0.0020,0.0120

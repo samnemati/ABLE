@@ -7,3 +7,5 @@ python scripts/20_number_and_features.py
 python scripts/30_explore.py
 python scripts/40_embed.py
 python scripts/50_evaluate.py
+python scripts/45_predict_structures.py
+python scripts/55_structure_analysis.py

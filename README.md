@@ -180,14 +180,89 @@ holds up under grouping (AbLang2 0.49 to 0.47, ESM-2 0.32 to 0.31).
 - A nonlinear model, or fine-tuning the language models, could change the picture. Doing either
   safely would need far more than 137 antibodies.
 
+## Stage 3: structure
+
+**Question.** Does the 3D shape of an antibody tell us anything about developability that its
+sequence does not?
+
+**Predicted structures** ([able/structure.py](able/structure.py)). There are no experimental
+structures for most of these antibodies, so each Fv is predicted with ABodyBuilder2 (ImmuneBuilder;
+Abanades et al., 2023). It is an antibody-specific deep learning model built on the AlphaFold2
+structure module. It runs an ensemble of four models, and the spread between them is its
+per-residue error estimate. OpenMM then refines each model to remove steric clashes. All 137
+antibodies were predicted with no failures, in 11 minutes on a laptop. Each structure is checked
+against its input sequence residue by residue, and its IMGT numbering matches stage 1 exactly.
+
+![Predicted error by region](outputs/f_stage3_error_by_region.png)
+
+**Where the predictions are uncertain.** CDR-H3 has the highest mean predicted error of the 14
+regions: 0.69 Å, against a mean of 0.28 Å over all residues. Per antibody, the CDR-H3 mean error
+ranges up to 3.27 Å. That is the expected pattern, because CDR-H3 is the most variable loop and the
+hardest to model. These are predicted structures, and their least reliable part is the part that
+matters most for binding.
+
+**Residue graphs** ([able/graphs.py](able/graphs.py)). Each structure becomes a graph with one node
+per residue (at its Cα atom), and an edge wherever two Cα atoms are within 10 Å.
+- Node features: amino acid, chain, framework or CDR, and predicted error.
+- Edge feature: distance.
+
+Graphs have 220 to 238 nodes, about 2,070 undirected edges and a mean degree of 18.2. Distances do
+not change when a structure is rotated or moved, so the graph does not depend on how the molecule
+happens to sit in the file. These graphs are the input for the graph neural network in stage 4.
+
+![Contact map](outputs/f_stage3_contact_map.png)
+
+**Surface features** ([able/surface.py](able/surface.py)). Solvent-accessible surface area
+(Shrake-Rupley) is computed per residue, and each residue is called exposed when its area is at
+least 25% of its theoretical maximum (Tien et al., 2013). Ten features summarize it:
+- total, hydrophobic, positive and negative surface area
+- the hydrophobic fraction
+- the exposed net charge
+- the same quantities within the CDRs
+- exposed hydrophobic residues in CDR-H3
+
+They are evaluated with the stage 2 engine and the same identity groups. Each comparison is
+against the stage 1 sequence features, Holm-corrected across 8 comparisons.
+
+![Stage 3 headline](outputs/f_stage3_headline.png)
+
+**Results (grouped CV).**
+- **Hydrophobicity: structure wins clearly.** Surface features predict HIC retention at
+  rho = 0.54 (95% CI 0.42 to 0.64), against 0.15 for the sequence features (difference +0.39,
+  adjusted p = 0.004). That is also well above the best stage 2 language model on HIC (AbLang2,
+  0.23). SMAC, the other hydrophobicity assay, follows (rho = 0.39). HIC measures exposed
+  hydrophobic surface, and the structure is what says which residues are exposed.
+- **Self-interaction: structure alone is worse.** On AC-SINS, surface features score rho = -0.02,
+  significantly below the sequence features (difference -0.26, adjusted p = 0.012). Combining the
+  two recovers most of the sequence-feature performance (0.19).
+- **Combining helps stability a little.** Sequence plus surface features improve Fab Tm over
+  sequence features alone (+0.14, adjusted p = 0.012). At rho = 0.11, this is still far below the
+  language models in stage 2 (AbLang2, 0.47).
+- **Combining is not always better.** On HIC, sequence plus surface (0.41) scores below surface
+  alone (0.54). With about 110 training antibodies, extra weakly related features cost ridge more
+  than they add.
+
+Random and grouped cross-validation give similar results for the surface features: HIC 0.55
+random against 0.54 grouped. That fits features that describe physical properties rather than
+sequence identity. The full tables are in
+[`outputs/t_stage3_results.csv`](outputs/t_stage3_results.csv) and
+[`outputs/t_stage3_comparisons.csv`](outputs/t_stage3_comparisons.csv).
+
+**Limitations.**
+- The structures are predictions, least reliable in CDR-H3.
+- They come from a single prediction method, and only for the Fv, not the full IgG.
+- SASA on a static model ignores flexibility.
+- The exposure threshold (25%) and the hydrophobic residue set are conventional choices that
+  were not tuned.
+
 ## Status
 
-Stages 1 and 2 of 4 are done. Planned next:
+Stages 1 to 3 of 4 are done. Planned next:
 
 1. ~~Sequences: numbering, CDRs, baseline features, exploration.~~
 2. ~~Protein language models (ESM-2, AbLang2) with ridge regression, random vs grouped
    cross-validation.~~
-3. Predicted 3D structures turned into residue graphs.
+3. ~~Predicted 3D structures, residue graphs and surface features.~~
 4. Graph neural network on structure, sequence and structure combined, full evaluation.
 
 A later part adds an active learning simulation on mutational scanning data.
@@ -200,6 +275,10 @@ conda create -n able python=3.12
 conda activate able
 pip install -r requirements.txt
 pip install -e .
+
+# Only for predicting structures (scripts/45_predict_structures.py):
+conda install -c conda-forge pytorch openmm pdbfixer   # one OpenMP runtime for all three
+pip install ImmuneBuilder
 
 pytest                        # unit tests, no network needed
 bash run_all.sh               # download data, number, features, embeddings, evaluation
