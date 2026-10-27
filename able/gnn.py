@@ -104,3 +104,121 @@ class GraphRegressor(nn.Module):
         # One vector per graph, in the order the graphs were batched, which is
         # the order of data.y.
         return self.head(global_mean_pool(x, data.batch)).squeeze(-1)
+
+
+def _inner_split(groups: np.ndarray, seed: int, val_fraction: float = 0.2):
+    """Hold out whole identity groups for early stopping.
+
+    Early stopping needs a validation set that the model does not train on.
+    It must be grouped for the same reason the outer folds are: a close
+    relative in the validation set would make the stopping point optimistic.
+    """
+    rng = np.random.default_rng(seed)
+    unique = rng.permutation(np.unique(groups))
+    n_val = max(1, int(round(len(unique) * val_fraction)))
+    val_groups = set(unique[:n_val].tolist())
+    is_val = np.array([g in val_groups for g in groups])
+    return np.nonzero(~is_val)[0], np.nonzero(is_val)[0]
+
+
+def train_one(
+    train_data: list[Data],
+    val_data: list[Data],
+    in_dim: int,
+    seed: int,
+    max_epochs: int = 200,
+    patience: int = 20,
+    hidden: int = 64,
+    lr: float = 1e-3,
+    weight_decay: float = 1e-4,
+    batch_size: int = 16,
+) -> tuple[nn.Module, dict]:
+    """Train until the validation loss stops improving, then restore the best epoch."""
+    from torch_geometric.loader import DataLoader
+
+    torch.manual_seed(seed)
+    model = GraphRegressor(in_dim=in_dim, hidden=hidden)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    generator = torch.Generator().manual_seed(seed)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, generator=generator)
+    val_loader = DataLoader(val_data, batch_size=len(val_data))
+    best_loss, best_state, best_epoch, since_best = float("inf"), None, 0, 0
+    for epoch in range(max_epochs):
+        model.train()
+        for batch in train_loader:
+            optimizer.zero_grad()
+            loss = nn.functional.mse_loss(model(batch), batch.y)
+            loss.backward()
+            optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            val_loss = sum(nn.functional.mse_loss(model(b), b.y).item() for b in val_loader)
+        if val_loss < best_loss:
+            best_loss, best_epoch, since_best = val_loss, epoch, 0
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+        else:
+            since_best += 1
+            if since_best >= patience:
+                break
+    model.load_state_dict(best_state)
+    return model.eval(), {"best_epoch": best_epoch, "best_val_loss": best_loss}
+
+
+def _standardize(dataset: list[Data], train_idx: np.ndarray) -> list[Data]:
+    """Z-score node features using training-fold statistics only."""
+    train_x = torch.cat([dataset[i].x for i in train_idx])
+    mean, std = train_x.mean(0), train_x.std(0)
+    std[std < 1e-8] = 1.0
+    out = []
+    for data in dataset:
+        scaled = data.clone()
+        scaled.x = (data.x - mean) / std
+        out.append(scaled)
+    return out
+
+
+def gnn_oof(dataset, y, groups, seed: int, **kwargs) -> np.ndarray:
+    """Out-of-fold predictions, with scaling and early stopping inside each fold."""
+    from sklearn.model_selection import GroupKFold
+    from torch_geometric.loader import DataLoader
+
+    y = np.asarray(y, dtype=float)
+    pred = np.empty(len(y))
+    splitter = GroupKFold(n_splits=5, shuffle=True, random_state=seed)
+    for fold, (train_idx, test_idx) in enumerate(splitter.split(np.zeros(len(y)), groups=groups)):
+        scaled = _standardize(dataset, train_idx)
+        # Z-score the target on the training fold so the loss scale does not
+        # depend on the assay's units, then undo it for the predictions.
+        mu, sigma = y[train_idx].mean(), y[train_idx].std() or 1.0
+        for i in train_idx:
+            scaled[i].y = torch.tensor([(y[i] - mu) / sigma], dtype=torch.float32)
+        inner_train, inner_val = _inner_split(groups[train_idx], seed=seed + fold)
+        model, _ = train_one(
+            [scaled[train_idx[i]] for i in inner_train],
+            [scaled[train_idx[i]] for i in inner_val],
+            in_dim=dataset[0].x.shape[1],
+            seed=seed + fold,
+            **kwargs,
+        )
+        with torch.no_grad():
+            batch = next(iter(DataLoader([scaled[i] for i in test_idx], batch_size=len(test_idx))))
+            pred[test_idx] = model(batch).numpy() * sigma + mu
+    return pred
+
+
+def gnn_repeated_cv(dataset, y, groups, n_repeats: int = 5, n_boot: int = 2000, **kwargs) -> dict:
+    """Repeat grouped cross-validation, reported like able.evaluate.repeated_cv."""
+    from able.evaluate import _bootstrap_indices, _mean_rho, _spearman
+
+    y = np.asarray(y, dtype=float)
+    oof = np.array([gnn_oof(dataset, y, groups, seed=seed, **kwargs) for seed in range(n_repeats)])
+    rhos = np.array([_spearman(y, p) for p in oof])
+    boot = np.array([_mean_rho(y[i], oof[:, i]) for i in _bootstrap_indices(len(y), n_boot, seed=0)])
+    return {
+        "rho_per_repeat": rhos,
+        "rho_mean": float(rhos.mean()),
+        "rho_sd": float(rhos.std(ddof=1)) if n_repeats > 1 else 0.0,
+        "oof": oof,
+        "ci_low": float(np.percentile(boot, 2.5)),
+        "ci_high": float(np.percentile(boot, 97.5)),
+    }

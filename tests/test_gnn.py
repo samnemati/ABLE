@@ -80,3 +80,56 @@ def test_forward_is_permutation_invariant():
         first = model(next(iter(DataLoader([data], batch_size=1))))
         second = model(next(iter(DataLoader([permuted], batch_size=1))))
     assert torch.allclose(first, second, atol=1e-5)
+
+
+def synthetic_dataset(n_graphs: int = 40, n_nodes: int = 12, signal: bool = True, seed: int = 0):
+    """Small graphs whose target is the fraction of nodes of amino acid 0."""
+    rng = np.random.default_rng(seed)
+    dataset, targets = [], []
+    for _ in range(n_graphs):
+        graph = small_graph(n_nodes, 0.0)
+        graph["node_aa"] = rng.integers(0, 2, n_nodes)
+        y = float((graph["node_aa"] == 0).mean()) if signal else float(rng.normal())
+        dataset.append(to_pyg(graph, y))
+        targets.append(y)
+    return dataset, np.array(targets)
+
+
+SYNTH_GROUPS = np.repeat(np.arange(10), 4)
+
+
+def test_inner_split_is_grouped():
+    from able.gnn import _inner_split
+
+    groups = np.repeat(np.arange(12), 3)
+    train_idx, val_idx = _inner_split(groups, seed=0)
+    assert not set(groups[train_idx]) & set(groups[val_idx])
+    assert len(val_idx) > 0
+
+
+def test_noise_target_not_positively_predicted():
+    from able.gnn import gnn_repeated_cv
+
+    dataset, y = synthetic_dataset(signal=False)
+    result = gnn_repeated_cv(dataset, y, SYNTH_GROUPS, n_repeats=2, max_epochs=30, hidden=8)
+    # Small positive values occur by chance on 40 graphs; leakage through the
+    # scaler, the target z-scoring or the early-stopping split would push this
+    # far higher, which is what the bound is here to catch.
+    assert result["rho_mean"] < 0.25
+
+
+def test_deterministic_with_seed():
+    from able.gnn import gnn_oof
+
+    dataset, y = synthetic_dataset()
+    first = gnn_oof(dataset, y, SYNTH_GROUPS, seed=0, max_epochs=3, hidden=8)
+    second = gnn_oof(dataset, y, SYNTH_GROUPS, seed=0, max_epochs=3, hidden=8)
+    assert np.allclose(first, second)
+
+
+def test_learns_simple_graph_signal():
+    from able.gnn import gnn_repeated_cv
+
+    dataset, y = synthetic_dataset()
+    result = gnn_repeated_cv(dataset, y, SYNTH_GROUPS, n_repeats=1, max_epochs=150, hidden=8)
+    assert result["rho_mean"] > 0.5
