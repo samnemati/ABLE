@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from fvcast.data import load_jain
-from fvcast.numbering import number_antibody, number_chain
+from able.data import load_jain
+from able.numbering import number_antibody, number_chain
 
 FIXTURE = Path(__file__).parent / "fixtures" / "jain_head.csv"
 

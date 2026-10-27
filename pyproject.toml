@@ -3,10 +3,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fvcast"
+name = "able"
 version = "0.1.0"
 description = "Antibody developability prediction from sequence and structure"
 requires-python = ">=3.12"
 
 [tool.setuptools]
-packages = ["fvcast"]
+packages = ["able"]

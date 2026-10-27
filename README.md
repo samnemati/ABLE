@@ -1,7 +1,8 @@
-# fvcast
+# ABLE
 
-**Fv forecast:** predicting how a therapeutic antibody will behave in manufacturing and in the
-body from the sequence of its variable fragment (Fv).
+**Antibody Behavior Learning & Evaluation.** Is this antibody able to become a drug? Predicting how
+a therapeutic antibody will behave in manufacturing and in the body from its variable-domain
+sequences.
 
 Predicting antibody developability (expression, stability, hydrophobicity, self-interaction and
 polyreactivity) from sequence and predicted structure, on 137 clinical-stage therapeutic
@@ -34,15 +35,15 @@ and assay caveats are in [PROVENANCE.md](PROVENANCE.md).
 
 ## Method so far
 
-1. **Load** ([fvcast/data.py](fvcast/data.py)): download, verify SHA-256, rename the 12 assays to
+1. **Load** ([able/data.py](able/data.py)): download, verify SHA-256, rename the 12 assays to
    short names, and record for each assay whether higher values are better and whether it is a
    clean continuous readout. SGAC-SINS (ordinal, censored at both ends) and CSI-BLI (most values
    at a floor near zero) are flagged.
-2. **Number** ([fvcast/numbering.py](fvcast/numbering.py)): number every VH and VL with ANARCI in
+2. **Number** ([able/numbering.py](able/numbering.py)): number every VH and VL with ANARCI in
    the IMGT scheme, which places all antibodies on one coordinate system, then cut each chain into
    four framework regions and three complementarity-determining regions (CDRs, the loops that
    bind the target). IMGT boundaries: CDR1 27-38, CDR2 56-65, CDR3 105-117.
-3. **Baseline features** ([fvcast/features.py](fvcast/features.py)): chain lengths, net charge at
+3. **Baseline features** ([able/features.py](able/features.py)): chain lengths, net charge at
    pH 7.4 (whole variable region and CDRs only), Kyte-Doolittle hydrophobicity (variable region,
    CDRs, CDR-H3), the six CDR lengths, and counts of chemical liability motifs inside the CDRs
    (N-glycosylation, deamidation, isomerization, methionine and tryptophan oxidation, cysteine).
@@ -95,8 +96,8 @@ A later part adds an active learning simulation on mutational scanning data.
 
 ```bash
 brew install hmmer            # or: sudo apt-get install hmmer
-conda create -n fvcast python=3.12
-conda activate fvcast
+conda create -n able python=3.12
+conda activate able
 pip install -r requirements.txt
 pip install -e .
 

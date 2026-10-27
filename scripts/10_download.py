@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fvcast.data import ASSAYS, download_jain, load_jain
+from able.data import ASSAYS, download_jain, load_jain
 
 ROOT = Path(__file__).resolve().parents[1]
 

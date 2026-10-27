@@ -16,7 +16,7 @@ from scipy.cluster.hierarchy import leaves_list, linkage
 from scipy.spatial.distance import squareform
 from scipy.stats import spearmanr
 
-from fvcast.data import ASSAYS
+from able.data import ASSAYS
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"

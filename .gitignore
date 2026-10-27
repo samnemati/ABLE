@@ -5,4 +5,4 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
-fvcast.egg-info/
+able.egg-info/
