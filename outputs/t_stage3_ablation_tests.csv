@@ -1,0 +1,4 @@
+assay,a,b,delta_rho,ci_low,ci_high,p,p_holm
+hic,surface (all 9),AbLang2 (stage 2),0.3072,0.1615,0.4451,0.0005,0.0015
+hic,surface: charge only,sequence: K+R and D+E counts,0.0774,-0.0102,0.1649,0.0870,0.0870
+hic,surface (all 9),baseline + charge counts,0.2718,0.1337,0.4147,0.0005,0.0015

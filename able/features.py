@@ -64,3 +64,17 @@ def sequence_features(vh: str, vl: str, regions: dict[str, str]) -> dict[str, fl
         # end of one CDR to the start of the next.
         features[motif] = sum(len(re.findall(pattern, regions[key])) for key in CDR_KEYS)
     return {name: float(value) for name, value in features.items()}
+
+
+def charge_counts(vh: str, vl: str) -> dict[str, float]:
+    """Count positively (K, R) and negatively (D, E) charged residues in the Fv.
+
+    A sequence-only control for the structure-based surface charge features:
+    if surface area adds nothing beyond how many charged residues there are,
+    these counts should predict as well.
+    """
+    fv = vh + vl
+    return {
+        "n_positive": float(sum(fv.count(aa) for aa in "KR")),
+        "n_negative": float(sum(fv.count(aa) for aa in "DE")),
+    }

@@ -189,7 +189,8 @@ sequence does not?
 structures for most of these antibodies, so each Fv is predicted with ABodyBuilder2 (ImmuneBuilder;
 Abanades et al., 2023). It is an antibody-specific deep learning model built on the AlphaFold2
 structure module. It runs an ensemble of four models, and the spread between them is its
-per-residue error estimate. OpenMM then refines each model to remove steric clashes. All 137
+per-residue error estimate. The model closest to the ensemble average is kept, and OpenMM refines
+it to remove steric clashes. All 137
 antibodies were predicted with no failures, in 11 minutes on a laptop. Each structure is checked
 against its input sequence residue by residue, and its IMGT numbering matches stage 1 exactly.
 
@@ -214,12 +215,15 @@ happens to sit in the file. These graphs are the input for the graph neural netw
 
 **Surface features** ([able/surface.py](able/surface.py)). Solvent-accessible surface area
 (Shrake-Rupley) is computed per residue, and each residue is called exposed when its area is at
-least 25% of its theoretical maximum (Tien et al., 2013). Ten features summarize it:
-- total, hydrophobic, positive and negative surface area
-- the hydrophobic fraction
-- the exposed net charge
-- the same quantities within the CDRs
-- exposed hydrophobic residues in CDR-H3
+least 25% of its theoretical maximum (Tien et al., 2013). Nine features summarize it:
+- total, hydrophobic, positive (K, R) and negative (D, E) surface area
+- the hydrophobic fraction of the surface
+- hydrophobic and positive surface area within the CDRs
+- the exposed net charge (count of exposed K and R minus exposed D and E)
+- the number of exposed hydrophobic residues in CDR-H3
+
+The area features sum over all residues; buried residues contribute almost nothing. The 25%
+threshold is used only for the two count features.
 
 They are evaluated with the stage 2 engine and the same identity groups. Each comparison is
 against the stage 1 sequence features, Holm-corrected across 8 comparisons.
@@ -227,11 +231,29 @@ against the stage 1 sequence features, Holm-corrected across 8 comparisons.
 ![Stage 3 headline](outputs/f_stage3_headline.png)
 
 **Results (grouped CV).**
-- **Hydrophobicity: structure wins clearly.** Surface features predict HIC retention at
-  rho = 0.54 (95% CI 0.42 to 0.64), against 0.15 for the sequence features (difference +0.39,
-  adjusted p = 0.004). That is also well above the best stage 2 language model on HIC (AbLang2,
-  0.23). SMAC, the other hydrophobicity assay, follows (rho = 0.39). HIC measures exposed
-  hydrophobic surface, and the structure is what says which residues are exposed.
+- **HIC: surface features predict it far better than anything so far.** All nine surface features
+  together reach rho = 0.54 (95% CI 0.42 to 0.64), against 0.15 for the stage 1 sequence features
+  (difference +0.39, adjusted p = 0.004) and 0.23 for AbLang2, the best stage 2 representation on
+  HIC (difference +0.31, adjusted p = 0.002 in a separate paired test). SMAC, the other
+  hydrophobicity-related assay, follows (rho = 0.39).
+- **The signal is in charge as much as in hydrophobic surface.** An ablation on HIC
+  ([`outputs/t_stage3_ablation.csv`](outputs/t_stage3_ablation.csv)) shows this:
+
+  | Features | HIC rho (grouped CV) |
+  |---|---|
+  | Hydrophobic surface features alone | 0.18 |
+  | Charge surface features alone | 0.39 |
+  | All nine surface features | 0.54 |
+  | Sequence-only counts of K+R and D+E | 0.31 |
+  | Stage 1 features plus those counts | 0.26 |
+
+  The strongest single feature is positive surface area, which goes with shorter HIC retention
+  (rho = -0.43). The stage 1 features held net charge but not the number of charged residues.
+  Simply counting them gets HIC to 0.31 without any structure. The structure-based charge features
+  are not significantly better than those counts (+0.08, p = 0.09). The full surface set is
+  (+0.27 over stage 1 plus counts, adjusted p = 0.002). The gain from structure comes from
+  combining where charged and hydrophobic residues sit on the surface, not from hydrophobic
+  exposure alone.
 - **Self-interaction: structure alone is worse.** On AC-SINS, surface features score rho = -0.02,
   significantly below the sequence features (difference -0.26, adjusted p = 0.012). Combining the
   two recovers most of the sequence-feature performance (0.19).
@@ -239,14 +261,15 @@ against the stage 1 sequence features, Holm-corrected across 8 comparisons.
   sequence features alone (+0.14, adjusted p = 0.012). At rho = 0.11, this is still far below the
   language models in stage 2 (AbLang2, 0.47).
 - **Combining is not always better.** On HIC, sequence plus surface (0.41) scores below surface
-  alone (0.54). With about 110 training antibodies, extra weakly related features cost ridge more
-  than they add.
+  alone (0.54). With about 110 training antibodies, extra weakly related features likely cost ridge
+  more than they add.
 
-Random and grouped cross-validation give similar results for the surface features: HIC 0.55
-random against 0.54 grouped. That fits features that describe physical properties rather than
-sequence identity. The full tables are in
-[`outputs/t_stage3_results.csv`](outputs/t_stage3_results.csv) and
-[`outputs/t_stage3_comparisons.csv`](outputs/t_stage3_comparisons.csv).
+Random and grouped cross-validation give similar results for the surface features (HIC 0.55
+random, 0.54 grouped). With only nine features, ridge has little room to memorize sequence
+families. The full tables are in
+[`outputs/t_stage3_results.csv`](outputs/t_stage3_results.csv),
+[`outputs/t_stage3_comparisons.csv`](outputs/t_stage3_comparisons.csv) and
+[`outputs/t_stage3_ablation_tests.csv`](outputs/t_stage3_ablation_tests.csv).
 
 **Limitations.**
 - The structures are predictions, least reliable in CDR-H3.
@@ -281,5 +304,5 @@ conda install -c conda-forge pytorch openmm pdbfixer   # one OpenMP runtime for 
 pip install ImmuneBuilder
 
 pytest                        # unit tests, no network needed
-bash run_all.sh               # download data, number, features, embeddings, evaluation
+bash run_all.sh               # data, numbering, features, embeddings, evaluation, structures
 ```

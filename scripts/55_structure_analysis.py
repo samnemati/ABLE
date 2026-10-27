@@ -17,7 +17,9 @@ from scipy.spatial.distance import cdist
 from scipy.stats import spearmanr
 
 from able.data import ASSAYS, load_jain
+from able.embeddings import load_cache
 from able.evaluate import holm, paired_bootstrap, permutation_pvalue, repeated_cv
+from able.features import charge_counts
 from able.graphs import residue_graph
 from able.numbering import IMGT_REGIONS
 from able.structure import check_matches_sequence, read_residues
@@ -151,6 +153,46 @@ for rep in ["surface", "baseline+surface"]:
 comparisons = pd.DataFrame(comparisons)
 comparisons["p_holm"] = holm(comparisons["p"].tolist())
 comparisons.to_csv(OUT / "t_stage3_comparisons.csv", index=False, float_format="%.4f")
+
+# 3b. Which surface features carry the HIC signal? Subsets of the surface
+# features, a sequence-only control that just counts charged residues, and the
+# best stage 2 representation, all on the same grouped folds.
+HYDROPHOBIC_SURFACE = ["sasa_hydrophobic", "frac_sasa_hydrophobic", "sasa_hydrophobic_cdrs", "exposed_hydrophobic_cdrh3"]
+CHARGE_SURFACE = ["sasa_positive", "sasa_negative", "sasa_positive_cdrs", "exposed_net_charge"]
+all_names = list(load_jain(ROOT / "data" / "jain.csv").index)
+counts = pd.DataFrame({n: charge_counts(df.loc[n, "vh"], df.loc[n, "vl"]) for n in names}).T
+ablation_X = {
+    "surface (all 9)": X["surface"],
+    "surface: hydrophobic only": surface[HYDROPHOBIC_SURFACE].to_numpy(dtype=float),
+    "surface: charge only": surface[CHARGE_SURFACE].to_numpy(dtype=float),
+    "sequence: K+R and D+E counts": counts.to_numpy(dtype=float),
+    "baseline + charge counts": np.hstack([X["baseline"], counts.to_numpy(dtype=float)]),
+    "AbLang2 (stage 2)": load_cache(ROOT / "cache" / "ablang2.npz", all_names)[[all_names.index(n) for n in names]],
+}
+ablation_rows, ablation_oof = [], {}
+for assay in ["hic", "smac"]:
+    y = df[assay].to_numpy(dtype=float)
+    for label, Xa in ablation_X.items():
+        result = repeated_cv(Xa, y, groups)
+        ablation_oof[(label, assay)] = result["oof"]
+        ablation_rows.append({"features": label, "assay": assay, "rho_mean": result["rho_mean"],
+                              "ci_low": result["ci_low"], "ci_high": result["ci_high"]})
+pd.DataFrame(ablation_rows).to_csv(OUT / "t_stage3_ablation.csv", index=False, float_format="%.4f")
+
+y = df["hic"].to_numpy(dtype=float)
+tests = []
+for a, b in [
+    ("surface (all 9)", "AbLang2 (stage 2)"),
+    ("surface: charge only", "sequence: K+R and D+E counts"),
+    ("surface (all 9)", "baseline + charge counts"),
+]:
+    delta, lo, hi, p = paired_bootstrap(y, ablation_oof[(a, "hic")], ablation_oof[(b, "hic")])
+    tests.append({"assay": "hic", "a": a, "b": b, "delta_rho": delta, "ci_low": lo, "ci_high": hi, "p": p})
+tests = pd.DataFrame(tests)
+tests["p_holm"] = holm(tests["p"].tolist())
+tests.to_csv(OUT / "t_stage3_ablation_tests.csv", index=False, float_format="%.4f")
+print(pd.DataFrame(ablation_rows).round(3).to_string(index=False))
+print(tests.round(4).to_string(index=False))
 
 # 4. Figures.
 fig, ax = plt.subplots(figsize=(9, 3.6))

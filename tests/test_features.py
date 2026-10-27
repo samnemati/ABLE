@@ -61,3 +61,10 @@ def test_trastuzumab_lengths():
     assert feats["len_cdrh3"] == 13
     assert feats["len_cdrl2"] == 3
     assert feats["len_vh"] == 120
+
+
+def test_charge_counts():
+    from able.features import charge_counts
+
+    counts = charge_counts("KRAD", "EKG")
+    assert counts == {"n_positive": 3.0, "n_negative": 2.0}
