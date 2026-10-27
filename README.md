@@ -278,17 +278,6 @@ families. The full tables are in
 - The exposure threshold (25%) and the hydrophobic residue set are conventional choices that
   were not tuned.
 
-## Status
-
-Stages 1 to 3 of 4 are done. Planned next:
-
-1. ~~Sequences: numbering, CDRs, baseline features, exploration.~~
-2. ~~Protein language models (ESM-2, AbLang2) with ridge regression, random vs grouped
-   cross-validation.~~
-3. ~~Predicted 3D structures, residue graphs and surface features.~~
-4. Graph neural network on structure, sequence and structure combined, full evaluation.
-
-A later part adds an active learning simulation on mutational scanning data.
 
 ## How to run
 
