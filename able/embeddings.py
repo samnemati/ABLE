@@ -13,8 +13,8 @@ import torch
 ESM2_650M = "facebook/esm2_t33_650M_UR50D"
 
 
-def mean_pool(hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    """Average residue vectors, leaving out special and padding tokens.
+def _real_token_mask(attention_mask: torch.Tensor) -> torch.Tensor:
+    """1 for residue tokens, 0 for the start token, end token and padding.
 
     ESM-2 adds a start token (BOS) before the sequence and an end token (EOS)
     after it, and batching pads shorter sequences. None of those are
@@ -25,8 +25,20 @@ def mean_pool(hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tenso
     mask[:, 0] = 0  # BOS is always the first token
     last_real = attention_mask.sum(dim=1) - 1  # EOS is the last real token
     mask[torch.arange(mask.shape[0]), last_real] = 0
+    return mask
+
+
+def mean_pool(hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    """Average residue vectors, leaving out special and padding tokens."""
+    mask = _real_token_mask(attention_mask)
     summed = (hidden * mask.unsqueeze(-1)).sum(dim=1)
     return summed / mask.sum(dim=1, keepdim=True)
+
+
+def _strip(hidden: torch.Tensor, attention_mask: torch.Tensor) -> list[torch.Tensor]:
+    """Per-sequence residue vectors, with special and padding tokens removed."""
+    mask = _real_token_mask(attention_mask).bool()
+    return [hidden[i][mask[i]] for i in range(hidden.shape[0])]
 
 
 def _device() -> str:
@@ -81,3 +93,29 @@ def load_cache(path: Path, names: list[str]) -> np.ndarray:
     if list(stored["names"]) != list(names):
         raise ValueError(f"{path}: cached antibody names do not match the current data order")
     return stored["X"]
+
+
+def esm2_per_residue(seqs: list[str], model_name: str = ESM2_650M, batch_size: int = 4) -> list[np.ndarray]:
+    """One (len(seq), 1280) array per sequence: a vector for every residue.
+
+    The GNN uses these as node features, so each residue carries what the
+    language model inferred about it from the whole chain.
+    """
+    from transformers import AutoModel, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    device = _device()
+    model = AutoModel.from_pretrained(model_name).eval().to(device)
+    order = np.argsort([len(s) for s in seqs])
+    out: list[np.ndarray | None] = [None] * len(seqs)
+    with torch.no_grad():
+        for start in range(0, len(seqs), batch_size):
+            idx = order[start : start + batch_size]
+            batch = tokenizer([seqs[i] for i in idx], return_tensors="pt", padding=True).to(device)
+            hidden = model(**batch).last_hidden_state
+            for position, residues in zip(idx, _strip(hidden, batch["attention_mask"])):
+                out[position] = residues.float().cpu().numpy()
+    for seq, arr in zip(seqs, out):
+        if arr is None or len(arr) != len(seq):
+            raise ValueError("per-residue embedding length does not match its sequence")
+    return out

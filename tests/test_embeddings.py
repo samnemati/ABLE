@@ -23,3 +23,16 @@ def test_cache_roundtrip_and_order_check(tmp_path):
     assert np.array_equal(load_cache(path, ["a", "b", "c"]), X)
     with pytest.raises(ValueError):
         load_cache(path, ["b", "a", "c"])
+
+
+def test_strip_special_tokens():
+    import torch
+
+    from able.embeddings import _strip
+
+    hidden = torch.tensor(
+        [[100.0, 1.0, 2.0, 3.0, 100.0], [100.0, 4.0, 6.0, 100.0, 999.0]]
+    ).unsqueeze(-1)
+    mask = torch.tensor([[1, 1, 1, 1, 1], [1, 1, 1, 1, 0]])
+    stripped = _strip(hidden, mask)
+    assert [a.tolist() for a in stripped] == [[[1.0], [2.0], [3.0]], [[4.0], [6.0]]]
