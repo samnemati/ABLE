@@ -1,4 +1,7 @@
-# antibody-developability-ml
+# fvcast
+
+**Fv forecast:** predicting how a therapeutic antibody will behave in manufacturing and in the
+body from the sequence of its variable fragment (Fv).
 
 Predicting antibody developability (expression, stability, hydrophobicity, self-interaction and
 polyreactivity) from sequence and predicted structure, on 137 clinical-stage therapeutic
@@ -8,7 +11,19 @@ antibodies out of training and test at the same time.
 
 ## Why I built this
 
-<!-- Samaneh to write -->
+My research has been in applying machine learning to biological data from the brain: graph
+neural networks on functional and structural connectomes, intracranial neural signals, and
+lesion-style analyses of attention heads in vision-language models. I had not worked with protein
+data, and I built this project to learn it from the ground up and to test whether the habits I rely
+on carry over to a new kind of molecule: a public dataset with documented provenance, a simple
+baseline that any complex model has to beat, and an evaluation that does not allow near-identical
+samples to sit on both sides of a train/test split.
+
+Antibody developability is a good place to do that. The datasets are small because every
+measurement requires producing and testing a real molecule, several of the assays are noisy or
+censored, and whether a learned representation adds anything beyond charge and loop length is
+still an open question. Those are the same conditions I have worked under with clinical cohorts of
+a few hundred people, where the honest answer is often that the simple model is hard to beat.
 
 ## Data
 
@@ -19,15 +34,15 @@ and assay caveats are in [PROVENANCE.md](PROVENANCE.md).
 
 ## Method so far
 
-1. **Load** ([abdev/data.py](abdev/data.py)): download, verify SHA-256, rename the 12 assays to
+1. **Load** ([fvcast/data.py](fvcast/data.py)): download, verify SHA-256, rename the 12 assays to
    short names, and record for each assay whether higher values are better and whether it is a
    clean continuous readout. SGAC-SINS (ordinal, censored at both ends) and CSI-BLI (most values
    at a floor near zero) are flagged.
-2. **Number** ([abdev/numbering.py](abdev/numbering.py)): number every VH and VL with ANARCI in
+2. **Number** ([fvcast/numbering.py](fvcast/numbering.py)): number every VH and VL with ANARCI in
    the IMGT scheme, which places all antibodies on one coordinate system, then cut each chain into
    four framework regions and three complementarity-determining regions (CDRs, the loops that
    bind the target). IMGT boundaries: CDR1 27-38, CDR2 56-65, CDR3 105-117.
-3. **Baseline features** ([abdev/features.py](abdev/features.py)): chain lengths, net charge at
+3. **Baseline features** ([fvcast/features.py](fvcast/features.py)): chain lengths, net charge at
    pH 7.4 (whole variable region and CDRs only), Kyte-Doolittle hydrophobicity (variable region,
    CDRs, CDR-H3), the six CDR lengths, and counts of chemical liability motifs inside the CDRs
    (N-glycosylation, deamidation, isomerization, methionine and tryptophan oxidation, cysteine).
@@ -80,8 +95,8 @@ A later part adds an active learning simulation on mutational scanning data.
 
 ```bash
 brew install hmmer            # or: sudo apt-get install hmmer
-conda create -n abdev python=3.12
-conda activate abdev
+conda create -n fvcast python=3.12
+conda activate fvcast
 pip install -r requirements.txt
 pip install -e .
 

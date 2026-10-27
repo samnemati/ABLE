@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from abdev.data import load_jain
-from abdev.features import sequence_features
-from abdev.numbering import IMGT_REGIONS, number_antibody
+from fvcast.data import load_jain
+from fvcast.features import sequence_features
+from fvcast.numbering import IMGT_REGIONS, number_antibody
 
 FIXTURE = Path(__file__).parent / "fixtures" / "jain_head.csv"
 CDRS = ["H_CDR1", "H_CDR2", "H_CDR3", "L_CDR1", "L_CDR2", "L_CDR3"]

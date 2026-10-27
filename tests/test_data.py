@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from abdev import data
-from abdev.data import ASSAYS, download_jain, load_jain
+from fvcast import data
+from fvcast.data import ASSAYS, download_jain, load_jain
 
 FIXTURE = Path(__file__).parent / "fixtures" / "jain_head.csv"
 

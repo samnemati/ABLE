@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from abdev.data import ASSAYS, load_jain
-from abdev.features import sequence_features
-from abdev.numbering import number_antibody
+from fvcast.data import ASSAYS, load_jain
+from fvcast.features import sequence_features
+from fvcast.numbering import number_antibody
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"
