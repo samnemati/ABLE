@@ -1,0 +1,8 @@
+pyproject.toml
+abdev/__init__.py
+abdev/data.py
+abdev.egg-info/PKG-INFO
+abdev.egg-info/SOURCES.txt
+abdev.egg-info/dependency_links.txt
+abdev.egg-info/top_level.txt
+tests/test_data.py
