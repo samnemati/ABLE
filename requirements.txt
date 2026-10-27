@@ -1,7 +1,11 @@
+ablang2==0.2.1
 anarci==2026.2.13.2
 biopython==1.88
 matplotlib==3.11.2
 numpy==2.5.4
 pandas==3.1.0
 pytest==9.1.1
+scikit-learn==1.9.1
 scipy==1.18.1
+torch==2.14.1
+transformers==5.21.0
