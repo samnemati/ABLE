@@ -14,5 +14,7 @@ jobs:
           python-version: "3.12"
       # ANARCI aligns sequences against antibody profile HMMs with HMMER.
       - run: sudo apt-get update && sudo apt-get install -y hmmer
-      - run: pip install -r requirements.txt && pip install -e .
+      # The CPU build of PyTorch is far smaller than the default CUDA build,
+      # and the tests never touch a GPU.
+      - run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt && pip install -e .
       - run: pytest -v
