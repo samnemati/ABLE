@@ -232,7 +232,7 @@ against the stage 1 sequence features, Holm-corrected across 8 comparisons.
 
 **Results (grouped CV).**
 - **HIC: surface features predict it far better than anything so far.** All nine surface features
-  together reach rho = 0.54 (95% CI 0.42 to 0.64), against 0.15 for the stage 1 sequence features
+  together reach rho = 0.53 (95% CI 0.42 to 0.64), against 0.15 for the stage 1 sequence features
   (difference +0.39, adjusted p = 0.004) and 0.23 for AbLang2, the best stage 2 representation on
   HIC (difference +0.31, adjusted p = 0.002 in a separate paired test). SMAC, the other
   hydrophobicity-related assay, follows (rho = 0.39).
@@ -243,7 +243,7 @@ against the stage 1 sequence features, Holm-corrected across 8 comparisons.
   |---|---|
   | Hydrophobic surface features alone | 0.18 |
   | Charge surface features alone | 0.39 |
-  | All nine surface features | 0.54 |
+  | All nine surface features | 0.53 |
   | Sequence-only counts of K+R and D+E | 0.31 |
   | Stage 1 features plus those counts | 0.26 |
 
@@ -261,11 +261,11 @@ against the stage 1 sequence features, Holm-corrected across 8 comparisons.
   sequence features alone (+0.14, adjusted p = 0.012). At rho = 0.11, this is still far below the
   language models in stage 2 (AbLang2, 0.47).
 - **Combining is not always better.** On HIC, sequence plus surface (0.41) scores below surface
-  alone (0.54). With about 110 training antibodies, extra weakly related features likely cost ridge
+  alone (0.53). With about 110 training antibodies, extra weakly related features likely cost ridge
   more than they add.
 
 Random and grouped cross-validation give similar results for the surface features (HIC 0.55
-random, 0.54 grouped). With only nine features, ridge has little room to memorize sequence
+random, 0.53 grouped). With only nine features, ridge has little room to memorize sequence
 families. The full tables are in
 [`outputs/t_stage3_results.csv`](outputs/t_stage3_results.csv),
 [`outputs/t_stage3_comparisons.csv`](outputs/t_stage3_comparisons.csv) and
@@ -278,6 +278,90 @@ families. The full tables are in
 - The exposure threshold (25%) and the hydrophobic residue set are conventional choices that
   were not tuned.
 
+
+## Stage 4: graph neural network
+
+**Question.** Does a model that reads the whole residue graph beat the simpler representations that
+summarize it?
+
+**The model** ([able/gnn.py](able/gnn.py)). Two `GraphConv` layers (hidden 64, batch normalization,
+ReLU, dropout 0.3), global mean pooling over residues, then a small linear head. Edge weight is
+`exp(-d / 4 Å)`, so a residue's closest neighbors count for more than contacts at the edge of the
+10 Å cutoff. This is deliberately the same shape of model used on brain connectomes in GraphBRAIN;
+the architecture and hyperparameters were fixed in advance and never tuned against the test folds.
+
+**Three variants:**
+
+| Variant | Node features | Graph |
+|---|---|---|
+| `gnn-basic` | residue identity, chain, CDR flag, predicted error (23) | real |
+| `gnn-esm2` | the same plus the per-residue ESM-2 vector (1303) | real |
+| `gnn-shuffled-edges` | as `gnn-basic` (23) | randomly rewired, same edge count and weights |
+
+`gnn-shuffled-edges` is the control that matters. If a model does as well on randomly rewired
+graphs, the 3D structure contributed nothing and only the node features mattered.
+
+**Training.** Grouped 5-fold cross-validation on the same identity groups as stages 2 and 3,
+5 repeats. Inside each training fold, a further grouped 20% split is held out for early stopping
+(patience 20, at most 200 epochs). Feature standardization and target z-scoring use training-fold
+statistics only. **Early stopping never sees the reported fold**, which is a deliberate fix of a
+methodological flaw in the earlier GraphBRAIN work, where the best epoch was chosen on the same
+fold that was then reported.
+
+![Stage 4 headline](outputs/f_stage4_headline.png)
+
+**Results (grouped CV).**
+- **The structure does carry signal, but only once the nodes are informative.** With ESM-2 node
+  features, the real graph beats the rewired graph on three of four assays: PSR +0.31
+  (adjusted p = 0.004), AC-SINS +0.21 (p = 0.021) and HIC +0.19 (p = 0.036). Fab Tm is positive but
+  not significant (+0.13, p = 0.22).
+- **With only basic node features, the wiring barely helps.** `gnn-basic` beats the shuffled
+  control by +0.11 on HIC (adjusted p = 0.065, not significant) and by less elsewhere. Knowing
+  which residues are near each other is not much use when a node knows only its own amino acid
+  type.
+- **The GNN does not win any assay.** The best GNN variant against the best earlier representation:
+  HIC 0.29 against 0.53 (surface features), AC-SINS 0.28 against 0.41 (AbLang2), Fab Tm 0.23
+  against 0.47 (AbLang2), PSR 0.31 against 0.32 (ESM-2). Only on PSR does it come close.
+
+**Why the GNN loses, and why that is the expected answer here.** A GNN has thousands of parameters
+and 137 training graphs. Ridge regression on a frozen embedding has one hyperparameter. The same
+pattern is documented for brain connectomes: Said et al. (2025, *npj Artificial Intelligence*) argue
+that graph deep learning models often fail to outperform simple baselines on functional connectome
+data, which is why a linear baseline belongs in every such comparison. The honest reading is not
+"graphs are useless for antibodies" but "with 137 labelled molecules, a frozen pretrained
+representation plus a regularized linear model is hard to beat". What would change the answer:
+more labelled data, pretraining the GNN on a large unlabelled structure set, or fine-tuning a
+structure-aware foundation model rather than training from scratch.
+
+## What the four stages say together
+
+![All stages](outputs/f_all_stages.png)
+
+| Property | Best representation | rho | Why it makes sense |
+|---|---|---|---|
+| Hydrophobicity (HIC) | Structure surface features | 0.53 | Needs to know which residues are exposed, and how charge and hydrophobicity are arranged |
+| Self-interaction (AC-SINS) | AbLang2 embedding | 0.41 | Whole-molecule charge and surface patterns |
+| Stability (Fab Tm) | AbLang2 embedding | 0.47 | Folding depends on long-range sequence context |
+| Polyreactivity (PSR) | ESM-2 embedding | 0.32 | Several representations score 0.28 to 0.32; mostly charge |
+
+**No single description of an antibody wins everywhere.** Which representation works depends on
+which physical property is being predicted, and the simplest adequate representation usually wins
+at this sample size. Two results survive every control: structure-derived surface features for
+hydrophobicity, and antibody language model embeddings for stability. Everything in
+[`outputs/t_all_stages.csv`](outputs/t_all_stages.csv).
+
+## Status
+
+All four stages are done.
+
+1. ~~Sequences: numbering, CDRs, baseline features, exploration.~~
+2. ~~Protein language models (ESM-2, AbLang2) with ridge regression, random vs grouped
+   cross-validation.~~
+3. ~~Predicted 3D structures, residue graphs and surface features.~~
+4. ~~Graph neural network on the residue graphs, with a shuffled-edge control.~~
+
+An optional later part would add an active learning simulation on mutational scanning data: how
+many measurements are needed if the model chooses which variants to test next.
 
 ## How to run
 

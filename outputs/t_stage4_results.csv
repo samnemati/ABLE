@@ -1,0 +1,13 @@
+representation,assay,split,rho_mean,rho_sd,ci_low,ci_high,headline,quality
+gnn-basic,hic,grouped,0.2087,0.0898,0.0847,0.3214,True,continuous
+gnn-esm2,hic,grouped,0.2886,0.0670,0.1827,0.3869,True,continuous
+gnn-shuffled-edges,hic,grouped,0.0956,0.0404,-0.0383,0.2179,True,continuous
+gnn-basic,acsins,grouped,0.0709,0.1276,-0.0292,0.1677,True,continuous
+gnn-esm2,acsins,grouped,0.2841,0.0526,0.1627,0.3884,True,continuous
+gnn-shuffled-edges,acsins,grouped,0.0726,0.0917,-0.0337,0.1753,True,continuous
+gnn-basic,psr,grouped,0.0749,0.1214,-0.0240,0.1738,True,continuous
+gnn-esm2,psr,grouped,0.3075,0.0394,0.1725,0.4266,True,continuous
+gnn-shuffled-edges,psr,grouped,0.0021,0.1136,-0.1029,0.1117,True,continuous
+gnn-basic,fab_tm,grouped,0.1510,0.0630,0.0269,0.2705,True,continuous
+gnn-esm2,fab_tm,grouped,0.2256,0.0997,0.0808,0.3551,True,continuous
+gnn-shuffled-edges,fab_tm,grouped,0.0989,0.1112,-0.0174,0.2012,True,continuous

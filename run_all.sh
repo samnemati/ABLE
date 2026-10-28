@@ -15,3 +15,4 @@ else
   echo "ImmuneBuilder not installed: skipping structure prediction"
 fi
 python scripts/55_structure_analysis.py
+python scripts/60_gnn.py
