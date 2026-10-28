@@ -19,7 +19,8 @@ import numpy as np
 import pandas as pd
 
 from able.data import ASSAYS, load_jain
-from able.evaluate import holm, paired_bootstrap
+from able.embeddings import load_cache
+from able.evaluate import holm, paired_bootstrap, repeated_cv
 from able.gnn import gnn_repeated_cv, shuffle_edges, to_pyg
 from able.graphs import residue_graph
 from able.structure import check_matches_sequence, read_residues
@@ -29,17 +30,22 @@ OUT = ROOT / "outputs"
 STRUCTURES = ROOT / "cache" / "structures"
 
 HEADLINE = ["hic", "acsins", "psr", "fab_tm"]
-VARIANTS = ["gnn-basic", "gnn-esm2", "gnn-shuffled-edges"]
+# Each real-graph variant has a rewired twin with identical node features, so
+# "does the wiring matter?" is asked without changing anything else.
+VARIANTS = ["gnn-basic", "gnn-basic-shuffled", "gnn-esm2", "gnn-esm2-shuffled"]
+SHUFFLED_TWIN = {"gnn-basic": "gnn-basic-shuffled", "gnn-esm2": "gnn-esm2-shuffled"}
 LABELS = {
-    "gnn-basic": "GNN (basic features)",
-    "gnn-esm2": "GNN (+ ESM-2 per residue)",
-    "gnn-shuffled-edges": "GNN (shuffled edges)",
+    "gnn-basic": "GNN, basic features",
+    "gnn-basic-shuffled": "GNN, basic, rewired",
+    "gnn-esm2": "GNN + ESM-2",
+    "gnn-esm2-shuffled": "GNN + ESM-2, rewired",
     "best-earlier": "Best from stages 1-3",
 }
 COLORS = {
     "gnn-basic": "#2a78d6",
+    "gnn-basic-shuffled": "#9dc1ea",
     "gnn-esm2": "#eb6834",
-    "gnn-shuffled-edges": "#898781",
+    "gnn-esm2-shuffled": "#f5b49a",
     "best-earlier": "#1baf7a",
 }
 INK, MUTED, GRID, BG = "#0b0b0b", "#898781", "#e1e0d9", "#fcfcfb"
@@ -71,10 +77,18 @@ rows, oof = [], {}
 for assay in HEADLINE:
     y = df[assay].to_numpy(dtype=float)
     basic = [to_pyg(graphs[n], y[i]) for i, n in enumerate(names)]
+    with_esm2 = [to_pyg(graphs[n], y[i], node_embedding=embeddings[n]) for i, n in enumerate(names)]
+
+    def rewire(real):
+        # A fresh rewiring per repeat, so the reported spread includes the
+        # randomness of the control itself rather than one lucky draw.
+        return lambda seed: [shuffle_edges(d, seed=1000 * seed + i) for i, d in enumerate(real)]
+
     datasets = {
         "gnn-basic": basic,
-        "gnn-esm2": [to_pyg(graphs[n], y[i], node_embedding=embeddings[n]) for i, n in enumerate(names)],
-        "gnn-shuffled-edges": [shuffle_edges(d, seed=i) for i, d in enumerate(basic)],
+        "gnn-basic-shuffled": rewire(basic),
+        "gnn-esm2": with_esm2,
+        "gnn-esm2-shuffled": rewire(with_esm2),
     }
     for variant in VARIANTS:
         result = gnn_repeated_cv(datasets[variant], y, groups)
@@ -84,10 +98,12 @@ for assay in HEADLINE:
                 "representation": variant, "assay": assay, "split": "grouped",
                 "rho_mean": result["rho_mean"], "rho_sd": result["rho_sd"],
                 "ci_low": result["ci_low"], "ci_high": result["ci_high"],
+                "best_epoch_mean": result["best_epoch_mean"], "best_epoch_max": result["best_epoch_max"],
                 "headline": True, "quality": ASSAYS[assay]["quality"],
             }
         )
-        print(f"  {assay:7s} {variant:19s} rho {result['rho_mean']:+.3f}")
+        print(f"  {assay:7s} {variant:19s} rho {result['rho_mean']:+.3f}  "
+              f"stopped at epoch {result['best_epoch_mean']:.0f} (max {result['best_epoch_max']})")
 results = pd.DataFrame(rows)
 results.to_csv(OUT / "t_stage4_results.csv", index=False, float_format="%.4f")
 
@@ -104,21 +120,53 @@ best_earlier = earlier.loc[earlier.groupby("assay")["rho_mean"].idxmax()].set_in
 print("\nBest pre-GNN representation per assay:")
 print(best_earlier[["representation", "rho_mean"]].round(3).to_string())
 
-# Comparisons: each GNN variant against gnn-shuffled-edges (does structure
-# matter?), and gnn-basic / gnn-esm2 against the best earlier representation.
+# Re-run the best earlier representation per assay with the same engine, so
+# the GNN can be compared against it on the same antibodies.
+ASSAY_FEATURES = {
+    "surface": lambda: pd.read_csv(OUT / "t_surface_features.csv", index_col="name")
+    .loc[names]
+    .drop(columns=list(ASSAYS))
+    .to_numpy(dtype=float),
+    "ablang2": lambda: load_cache(ROOT / "cache" / "ablang2.npz", names),
+    "esm2": lambda: load_cache(ROOT / "cache" / "esm2_650m.npz", names),
+    "baseline": lambda: pd.read_csv(OUT / "t_features.csv", index_col="name")
+    .loc[names]
+    .drop(columns=list(ASSAYS))
+    .to_numpy(dtype=float),
+}
+earlier_oof = {}
+for assay in HEADLINE:
+    key = best_earlier.loc[assay, "representation"]
+    if key not in ASSAY_FEATURES:
+        raise SystemExit(f"no feature matrix registered for {key}")
+    result = repeated_cv(ASSAY_FEATURES[key](), df[assay].to_numpy(dtype=float), groups, n_repeats=10)
+    earlier_oof[(key, assay)] = result["oof"]
+    print(f"  {assay:7s} best earlier {key:9s} rho {result['rho_mean']:+.3f} (recomputed)")
+
+# Two families of comparison, Holm-corrected together:
+#   real graph vs its own rewired twin  -> does the 3D wiring carry signal?
+#   each GNN variant vs the best earlier representation -> is a GNN worth it?
 comparisons = []
 for assay in HEADLINE:
     y = df[assay].to_numpy(dtype=float)
-    for a, b in (("gnn-basic", "gnn-shuffled-edges"), ("gnn-esm2", "gnn-shuffled-edges")):
-        delta, lo, hi, p = paired_bootstrap(y, oof[(a, assay)], oof[(b, assay)])
-        comparisons.append({"assay": assay, "a": a, "b": b, "delta_rho": delta, "ci_low": lo, "ci_high": hi, "p": p})
+    best_key = best_earlier.loc[assay, "representation"]
+    best_oof = earlier_oof[(best_key, assay)]
+    for real, twin in SHUFFLED_TWIN.items():
+        delta, lo, hi, p = paired_bootstrap(y, oof[(real, assay)], oof[(twin, assay)])
+        comparisons.append({"assay": assay, "a": real, "b": twin, "family": "real vs rewired",
+                            "delta_rho": delta, "ci_low": lo, "ci_high": hi, "p": p})
+    for variant in ("gnn-basic", "gnn-esm2"):
+        delta, lo, hi, p = paired_bootstrap(y, oof[(variant, assay)], best_oof)
+        comparisons.append({"assay": assay, "a": variant, "b": f"best-earlier ({best_key})",
+                            "family": "GNN vs best earlier", "delta_rho": delta,
+                            "ci_low": lo, "ci_high": hi, "p": p})
 comparisons = pd.DataFrame(comparisons)
 comparisons["p_holm"] = holm(comparisons["p"].tolist())
 comparisons.to_csv(OUT / "t_stage4_comparisons.csv", index=False, float_format="%.4f")
 print("\n" + comparisons.round(4).to_string(index=False))
 
 # Figure 1: the three GNN variants plus the best earlier representation.
-fig, axes = plt.subplots(1, 4, figsize=(12, 3.9), sharey=True)
+fig, axes = plt.subplots(1, 4, figsize=(13.5, 4.0), sharey=True)
 grouped = results.set_index(["representation", "assay"])
 for ax, assay in zip(axes, HEADLINE):
     entries = [(v, grouped.loc[(v, assay)]) for v in VARIANTS]
@@ -132,13 +180,13 @@ for ax, assay in zip(axes, HEADLINE):
         )
     ax.axhline(0, color=MUTED, linewidth=1)
     ax.set_xticks([])
-    ax.set_xlim(-0.6, 3.4)
+    ax.set_xlim(-0.6, len(VARIANTS) + 0.4)
     ax.set_title(f"{ASSAYS[assay]['label']}\nbest earlier: {best_earlier.loc[assay, 'representation']}", fontsize=8.5)
     ax.yaxis.grid(True, color=GRID, linewidth=0.5)
     ax.set_axisbelow(True)
 axes[0].set_ylabel("Spearman rho (grouped CV, 95% CI)")
 handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, bbox_to_anchor=(0.5, -0.02))
+fig.legend(handles, labels, loc="lower center", ncol=5, frameon=False, bbox_to_anchor=(0.5, -0.02))
 fig.suptitle("Does a graph neural network beat the simpler representations?", color=INK)
 fig.tight_layout(rect=(0, 0.08, 1, 1))
 fig.savefig(OUT / "f_stage4_headline.png", dpi=150)

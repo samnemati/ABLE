@@ -122,9 +122,10 @@ def test_deterministic_with_seed():
     from able.gnn import gnn_oof
 
     dataset, y = synthetic_dataset()
-    first = gnn_oof(dataset, y, SYNTH_GROUPS, seed=0, max_epochs=3, hidden=8)
-    second = gnn_oof(dataset, y, SYNTH_GROUPS, seed=0, max_epochs=3, hidden=8)
+    first, first_epochs = gnn_oof(dataset, y, SYNTH_GROUPS, seed=0, max_epochs=3, hidden=8)
+    second, second_epochs = gnn_oof(dataset, y, SYNTH_GROUPS, seed=0, max_epochs=3, hidden=8)
     assert np.allclose(first, second)
+    assert first_epochs == second_epochs
 
 
 def test_learns_simple_graph_signal():
@@ -133,3 +134,52 @@ def test_learns_simple_graph_signal():
     dataset, y = synthetic_dataset()
     result = gnn_repeated_cv(dataset, y, SYNTH_GROUPS, n_repeats=1, max_epochs=150, hidden=8)
     assert result["rho_mean"] > 0.5
+
+
+def test_shuffle_edges_preserves_degree():
+    """A degree-preserving null: only the wiring changes, not how many
+    neighbours each residue has. GraphConv sums over neighbours, so a node
+    whose degree changed would see a different signal scale for that reason
+    alone."""
+    data = to_pyg(fixture_graph(), 1.0)
+    shuffled = shuffle_edges(data, seed=0)
+    before = np.bincount(data.edge_index[0].numpy(), minlength=data.num_nodes)
+    after = np.bincount(shuffled.edge_index[0].numpy(), minlength=data.num_nodes)
+    assert (before == after).all()
+
+
+def test_shuffle_edges_weight_not_tied_to_node_index():
+    """Weights must not line up with node order. Assigning sorted weights to
+    a sorted edge list creates a gradient along the chain, which a GNN can
+    exploit, so the control would differ from the real graph for a reason
+    that has nothing to do with wiring."""
+    from scipy.stats import spearmanr
+
+    shuffled = shuffle_edges(to_pyg(fixture_graph(), 1.0), seed=0)
+    src = shuffled.edge_index[0].numpy()
+    assert abs(spearmanr(src, shuffled.edge_weight.numpy()).statistic) < 0.2
+
+
+def test_repeated_cv_accepts_a_dataset_factory():
+    """A control built by random rewiring must be redrawn for each repeat,
+    otherwise every repeat shares one realization of the null and the spread
+    across repeats understates how much it varies."""
+    from able.gnn import gnn_repeated_cv
+
+    dataset, y = synthetic_dataset()
+    seen = []
+
+    def factory(seed: int):
+        seen.append(seed)
+        return [shuffle_edges(d, seed=seed + i) for i, d in enumerate(dataset)]
+
+    gnn_repeated_cv(factory, y, SYNTH_GROUPS, n_repeats=2, max_epochs=3, hidden=8)
+    assert seen == [0, 1]
+
+
+def test_repeated_cv_reports_stopping_epoch():
+    from able.gnn import gnn_repeated_cv
+
+    dataset, y = synthetic_dataset()
+    result = gnn_repeated_cv(dataset, y, SYNTH_GROUPS, n_repeats=1, max_epochs=5, hidden=8)
+    assert 0 <= result["best_epoch_mean"] <= 5

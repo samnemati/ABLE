@@ -282,56 +282,73 @@ families. The full tables are in
 ## Stage 4: graph neural network
 
 **Question.** Does a model that reads the whole residue graph beat the simpler representations that
-summarize it?
+summarize it, and does the 3D wiring carry information beyond the residues themselves?
 
 **The model** ([able/gnn.py](able/gnn.py)). Two `GraphConv` layers (hidden 64, batch normalization,
 ReLU, dropout 0.3), global mean pooling over residues, then a small linear head. Edge weight is
-`exp(-d / 4 Å)`, so a residue's closest neighbors count for more than contacts at the edge of the
-10 Å cutoff. This is deliberately the same shape of model used on brain connectomes in GraphBRAIN;
-the architecture and hyperparameters were fixed in advance and never tuned against the test folds.
+`exp(-d / 4 Å)`, so a residue's closest neighbours count for more than contacts at the edge of the
+10 Å cutoff. This is deliberately the same shape of model used on brain connectomes in GraphBRAIN,
+so the comparison is about the data rather than about who tuned harder. The architecture and
+hyperparameters were fixed in advance and never tuned against the test folds.
 
-**Three variants:**
+**Four variants, two matched pairs:**
 
 | Variant | Node features | Graph |
 |---|---|---|
 | `gnn-basic` | residue identity, chain, CDR flag, predicted error (23) | real |
+| `gnn-basic-shuffled` | the same (23) | rewired |
 | `gnn-esm2` | the same plus the per-residue ESM-2 vector (1303) | real |
-| `gnn-shuffled-edges` | as `gnn-basic` (23) | randomly rewired, same edge count and weights |
+| `gnn-esm2-shuffled` | the same (1303) | rewired |
 
-`gnn-shuffled-edges` is the control that matters. If a model does as well on randomly rewired
-graphs, the 3D structure contributed nothing and only the node features mattered.
+Each real graph has a rewired twin with **identical node features**, so the only thing that differs
+within a pair is the wiring. Rewiring uses repeated double-edge swaps, which preserve every
+residue's number of contacts exactly: the configuration-model null used for connectomes, not a
+plain random graph. That matters because `GraphConv` sums over neighbours, so a node whose degree
+changed would see a different signal scale for a reason unrelated to wiring. About 90% of edges are
+replaced, and the control is redrawn for every repeat.
 
 **Training.** Grouped 5-fold cross-validation on the same identity groups as stages 2 and 3,
 5 repeats. Inside each training fold, a further grouped 20% split is held out for early stopping
-(patience 20, at most 200 epochs). Feature standardization and target z-scoring use training-fold
-statistics only. **Early stopping never sees the reported fold**, which is a deliberate fix of a
-methodological flaw in the earlier GraphBRAIN work, where the best epoch was chosen on the same
-fold that was then reported.
+(patience 20, at most 200 epochs; models stopped after 6 to 23 epochs on average, well short of the
+cap). Feature standardization and target z-scoring use training-fold statistics only. **Early
+stopping never sees the reported fold**, a deliberate fix of a methodological flaw in the earlier
+GraphBRAIN work, where the best epoch was chosen on the same fold that was then reported.
 
 ![Stage 4 headline](outputs/f_stage4_headline.png)
 
-**Results (grouped CV).**
-- **The structure does carry signal, but only once the nodes are informative.** With ESM-2 node
-  features, the real graph beats the rewired graph on three of four assays: PSR +0.31
-  (adjusted p = 0.004), AC-SINS +0.21 (p = 0.021) and HIC +0.19 (p = 0.036). Fab Tm is positive but
-  not significant (+0.13, p = 0.22).
-- **With only basic node features, the wiring barely helps.** `gnn-basic` beats the shuffled
-  control by +0.11 on HIC (adjusted p = 0.065, not significant) and by less elsewhere. Knowing
-  which residues are near each other is not much use when a node knows only its own amino acid
-  type.
-- **The GNN does not win any assay.** The best GNN variant against the best earlier representation:
-  HIC 0.29 against 0.53 (surface features), AC-SINS 0.28 against 0.41 (AbLang2), Fab Tm 0.23
-  against 0.47 (AbLang2), PSR 0.31 against 0.32 (ESM-2). Only on PSR does it come close.
+**Results (grouped CV, 16 comparisons, Holm-corrected together).**
 
-**Why the GNN loses, and why that is the expected answer here.** A GNN has thousands of parameters
-and 137 training graphs. Ridge regression on a frozen embedding has one hyperparameter. The same
-pattern is documented for brain connectomes: Said et al. (2025, *npj Artificial Intelligence*) argue
-that graph deep learning models often fail to outperform simple baselines on functional connectome
-data, which is why a linear baseline belongs in every such comparison. The honest reading is not
-"graphs are useless for antibodies" but "with 137 labelled molecules, a frozen pretrained
-representation plus a regularized linear model is hard to beat". What would change the answer:
-more labelled data, pretraining the GNN on a large unlabelled structure set, or fine-tuning a
-structure-aware foundation model rather than training from scratch.
+- **The 3D wiring adds almost nothing.** Of the eight real-against-rewired tests, exactly one
+  survives correction: `gnn-esm2` on PSR (+0.09, adjusted p = 0.044). The rest are small and not
+  significant, and on AC-SINS the rewired graph with basic features actually scored *higher*
+  (-0.10, raw p = 0.023, adjusted p = 0.21). A model given the same residues in a randomly rewired
+  arrangement does about as well as one given the real structure.
+- **The GNN loses to the simpler methods, usually by a lot.** Six of the eight GNN-against-best-earlier
+  tests are significantly worse after correction: on HIC, `gnn-esm2` scores 0.29 against 0.53 for
+  surface features (-0.25, adjusted p = 0.008); on Fab Tm, 0.23 against 0.47 for AbLang2
+  (-0.25, adjusted p = 0.044). The only GNN variant that matches anything is `gnn-esm2` on PSR
+  (0.31 against ESM-2's 0.32, a difference of -0.01, not significant).
+- **Node features do all the work.** `gnn-esm2` beats `gnn-basic` on every assay (0.29 against 0.21
+  on HIC, 0.28 against 0.07 on AC-SINS, 0.31 against 0.07 on PSR, 0.23 against 0.15 on Fab Tm), and
+  `gnn-esm2-shuffled` beats `gnn-basic` too. What the model knows about each residue matters far
+  more than which residues sit next to it.
+
+**Why this is the expected answer here, and what it is not.** A GNN has thousands of parameters and
+137 training graphs. Ridge regression on a frozen pretrained embedding has one hyperparameter and
+inherits what a language model learned from tens of millions of sequences. The same pattern is
+documented for brain connectomes: Han et al. (2025, "Rethinking Functional Brain Connectome
+Analysis: Do Graph Deep Learning Models Help?", arXiv:2501.17207) find that graph deep learning
+often fails to outperform simple baselines there, and a 2025 NeuroGraph follow-up
+(arXiv:2503.15902) found GNN accuracy on connectome benchmarks held up even with all edges removed,
+which is close to what the rewired control shows here.
+
+This result does **not** say that antibody structure is uninformative. Stage 3 showed the opposite:
+surface features computed from the very same structures are the best predictor of HIC by a wide
+margin. What it says is narrower and more useful: **at this sample size, with this architecture, a
+GNN cannot extract from the contact graph what a few well-chosen structural summaries capture
+directly.** What would change the answer: more labelled molecules, pretraining the GNN on a large
+unlabelled structure set, or fine-tuning a structure-aware foundation model instead of training
+from scratch.
 
 ## What the four stages say together
 
@@ -342,12 +359,17 @@ structure-aware foundation model rather than training from scratch.
 | Hydrophobicity (HIC) | Structure surface features | 0.53 | Needs to know which residues are exposed, and how charge and hydrophobicity are arranged |
 | Self-interaction (AC-SINS) | AbLang2 embedding | 0.41 | Whole-molecule charge and surface patterns |
 | Stability (Fab Tm) | AbLang2 embedding | 0.47 | Folding depends on long-range sequence context |
-| Polyreactivity (PSR) | ESM-2 embedding | 0.32 | Several representations score 0.28 to 0.32; mostly charge |
+| Polyreactivity (PSR) | ESM-2 embedding | 0.32 | Several representations reach 0.28 to 0.32; mostly charge |
 
-**No single description of an antibody wins everywhere.** Which representation works depends on
-which physical property is being predicted, and the simplest adequate representation usually wins
-at this sample size. Two results survive every control: structure-derived surface features for
-hydrophobicity, and antibody language model embeddings for stability. Everything in
+**No single description of an antibody wins everywhere**, and the simplest adequate representation
+usually wins at this sample size. Two findings survive every control: structure-derived surface
+features for hydrophobicity, and antibody language model embeddings for stability. The most
+expensive model in the project, the graph neural network, wins nothing.
+
+The thread running through all four stages is methodological: identity-grouped splits, simple
+baselines reported beside complex models, an ablation when a result had an appealing story
+(stage 3), a matched control when a model could be exploiting something other than the intended
+signal (stage 4), and correction for multiple comparisons throughout. Everything is in
 [`outputs/t_all_stages.csv`](outputs/t_all_stages.csv).
 
 ## Status

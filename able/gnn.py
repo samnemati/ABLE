@@ -50,29 +50,50 @@ def to_pyg(
     )
 
 
-def shuffle_edges(data: Data, seed: int) -> Data:
-    """Rewire a graph at random, keeping its edge count and weights.
+def shuffle_edges(data: Data, seed: int, n_swaps_per_edge: int = 10) -> Data:
+    """Rewire a graph at random while keeping every residue's number of contacts.
 
-    The control condition: if a model does as well on rewired graphs, then
-    the 3D structure contributed nothing and only the node features mattered.
+    The control condition: if a model does as well on rewired graphs, then the
+    3D arrangement contributed nothing and only the node features mattered.
+
+    Rewiring is done by repeated double-edge swaps: take edges (a, b) and
+    (c, d) and replace them with (a, d) and (c, b). Every node keeps its
+    degree, so this is the configuration-model null used for connectomes,
+    not a plain random graph. That matters because GraphConv sums over
+    neighbours, so a node whose degree changed would see a different signal
+    scale for a reason that has nothing to do with wiring. Edge weights are
+    carried along with their slots and then shuffled, so the weight
+    distribution is unchanged and no weight lines up with node position.
     """
     rng = np.random.default_rng(seed)
-    n, n_directed = data.num_nodes, data.edge_index.shape[1]
-    wanted = n_directed // 2
-    # Draw unordered pairs: storing i < j keeps (i, j) and (j, i) from being
-    # drawn as two separate edges, which would break the symmetry below.
-    edges = set()
-    while len(edges) < wanted:
-        i, j = rng.integers(0, n, 2)
-        if i != j:
-            edges.add((int(min(i, j)), int(max(i, j))))
-    src, dst = zip(*sorted(edges))
+    src, dst = data.edge_index.numpy()
+    upper = src < dst  # one row per undirected edge
+    edges = list(zip(src[upper].tolist(), dst[upper].tolist()))
+    present = set(edges) | {(j, i) for i, j in edges}
+    for _ in range(n_swaps_per_edge * len(edges)):
+        x, y = rng.integers(0, len(edges), 2)
+        if x == y:
+            continue
+        a, b = edges[x]
+        c, d = edges[y]
+        if len({a, b, c, d}) < 4:
+            continue
+        new_a, new_c = (a, d), (c, b)
+        if new_a in present or new_c in present:
+            continue
+        for old in ((a, b), (b, a), (c, d), (d, c)):
+            present.discard(old)
+        for fresh in (new_a, (d, a), new_c, (b, c)):
+            present.add(fresh)
+        edges[x], edges[y] = new_a, new_c
+    weights = data.edge_weight.numpy()[upper]
+    rng.shuffle(weights)
+    new_src, new_dst = zip(*edges)
     shuffled = data.clone()
-    shuffled.edge_index = torch.from_numpy(np.array([src + dst, dst + src], dtype=np.int64))
-    # Reuse the real distance weights, one per undirected edge, so only the
-    # wiring is randomized and the weight distribution is unchanged.
-    per_edge = data.edge_weight.sort().values[::2]
-    shuffled.edge_weight = torch.cat([per_edge, per_edge])
+    shuffled.edge_index = torch.from_numpy(
+        np.array([new_src + new_dst, new_dst + new_src], dtype=np.int64)
+    )
+    shuffled.edge_weight = torch.from_numpy(np.concatenate([weights, weights]).astype(np.float32))
     return shuffled
 
 
@@ -177,41 +198,59 @@ def _standardize(dataset: list[Data], train_idx: np.ndarray) -> list[Data]:
     return out
 
 
-def gnn_oof(dataset, y, groups, seed: int, **kwargs) -> np.ndarray:
-    """Out-of-fold predictions, with scaling and early stopping inside each fold."""
+def gnn_oof(dataset, y, groups, seed: int, **kwargs) -> tuple[np.ndarray, list[int]]:
+    """Out-of-fold predictions, with scaling and early stopping inside each fold.
+
+    Returns the predictions and the stopping epoch of each fold, so a run that
+    never converged (or stopped at the epoch cap) is visible afterwards.
+    """
     from sklearn.model_selection import GroupKFold
     from torch_geometric.loader import DataLoader
 
     y = np.asarray(y, dtype=float)
     pred = np.empty(len(y))
+    best_epochs = []
     splitter = GroupKFold(n_splits=5, shuffle=True, random_state=seed)
     for fold, (train_idx, test_idx) in enumerate(splitter.split(np.zeros(len(y)), groups=groups)):
         scaled = _standardize(dataset, train_idx)
         # Z-score the target on the training fold so the loss scale does not
         # depend on the assay's units, then undo it for the predictions.
         mu, sigma = y[train_idx].mean(), y[train_idx].std() or 1.0
-        for i in train_idx:
+        for i in range(len(scaled)):
             scaled[i].y = torch.tensor([(y[i] - mu) / sigma], dtype=torch.float32)
         inner_train, inner_val = _inner_split(groups[train_idx], seed=seed + fold)
-        model, _ = train_one(
+        model, history = train_one(
             [scaled[train_idx[i]] for i in inner_train],
             [scaled[train_idx[i]] for i in inner_val],
-            in_dim=dataset[0].x.shape[1],
+            in_dim=scaled[0].x.shape[1],
             seed=seed + fold,
             **kwargs,
         )
+        best_epochs.append(history["best_epoch"])
         with torch.no_grad():
             batch = next(iter(DataLoader([scaled[i] for i in test_idx], batch_size=len(test_idx))))
             pred[test_idx] = model(batch).numpy() * sigma + mu
-    return pred
+    return pred, best_epochs
 
 
 def gnn_repeated_cv(dataset, y, groups, n_repeats: int = 5, n_boot: int = 2000, **kwargs) -> dict:
-    """Repeat grouped cross-validation, reported like able.evaluate.repeated_cv."""
+    """Repeat grouped cross-validation, reported like able.evaluate.repeated_cv.
+
+    `dataset` may be a list of graphs, or a callable taking the repeat seed and
+    returning one. The callable form exists for the rewired control, which must
+    be redrawn each repeat so the reported spread includes the randomness of
+    the rewiring itself.
+    """
     from able.evaluate import _bootstrap_indices, _mean_rho, _spearman
 
     y = np.asarray(y, dtype=float)
-    oof = np.array([gnn_oof(dataset, y, groups, seed=seed, **kwargs) for seed in range(n_repeats)])
+    oof, epochs = [], []
+    for seed in range(n_repeats):
+        graphs = dataset(seed) if callable(dataset) else dataset
+        predictions, best_epochs = gnn_oof(graphs, y, groups, seed=seed, **kwargs)
+        oof.append(predictions)
+        epochs.extend(best_epochs)
+    oof = np.array(oof)
     rhos = np.array([_spearman(y, p) for p in oof])
     boot = np.array([_mean_rho(y[i], oof[:, i]) for i in _bootstrap_indices(len(y), n_boot, seed=0)])
     return {
@@ -219,6 +258,8 @@ def gnn_repeated_cv(dataset, y, groups, n_repeats: int = 5, n_boot: int = 2000, 
         "rho_mean": float(rhos.mean()),
         "rho_sd": float(rhos.std(ddof=1)) if n_repeats > 1 else 0.0,
         "oof": oof,
+        "best_epoch_mean": float(np.mean(epochs)),
+        "best_epoch_max": int(np.max(epochs)),
         "ci_low": float(np.percentile(boot, 2.5)),
         "ci_high": float(np.percentile(boot, 97.5)),
     }
