@@ -284,12 +284,42 @@ families. The full tables are in
 **Question.** Does a model that reads the whole residue graph beat the simpler representations that
 summarize it, and does the 3D wiring carry information beyond the residues themselves?
 
-**The model** ([able/gnn.py](able/gnn.py)). Two `GraphConv` layers (hidden 64, batch normalization,
-ReLU, dropout 0.3), global mean pooling over residues, then a small linear head. Edge weight is
-`exp(-d / 4 Å)`, so a residue's closest neighbours count for more than contacts at the edge of the
-10 Å cutoff. This is deliberately the same shape of model used on brain connectomes in GraphBRAIN,
-so the comparison is about the data rather than about who tuned harder. The architecture and
-hyperparameters were fixed in advance and never tuned against the test folds.
+### What one graph is
+
+| | Brain connectome graph | Antibody graph here |
+|---|---|---|
+| One graph | one subject's brain | one antibody (VH + VL) |
+| Node | an atlas region | one amino acid residue, at its Cα atom |
+| Nodes per graph | fixed by the atlas, the same in everyone | 220 to 238, different in every antibody |
+| Edge | correlated activity between regions | two Cα atoms within 10 Å of each other |
+| Edge weight | signed correlation | `exp(-distance / 4 Å)`, always positive |
+| Thresholding | proportional, since correlation scales differ between subjects | absolute, since 10 Å means the same thing in every molecule |
+| Node features | per-region imaging measures | residue identity, chain, framework or CDR, predicted error, optionally an ESM-2 vector |
+| Graph label | a behavioural score | one assay value |
+
+**The row that matters is the third one.** A connectome has an atlas, so region 47 is the same
+structure in every subject and a model can learn that region 47 matters for an outcome. Antibodies
+have no such correspondence: residue 50 is a different amino acid doing a different job in every
+molecule, and the chains are not even the same length. A protein GNN can therefore only learn
+patterns of the form "a residue of this kind, surrounded by these kinds of residues, at these
+distances", never "position 50 matters". That is a harder problem, and it is the reason node
+features dominate the results below: a node that knows only its amino acid type carries very
+little, while one carrying a language model vector knows what that residue is doing in this
+particular antibody.
+
+Both are also multimodal graphs, where the wiring and the node descriptions come from different
+sources: a predicted structure for the edges here, a language model reading the sequence for the
+richest node features.
+
+### The model
+
+[able/gnn.py](able/gnn.py). Two `GraphConv` layers (hidden 64, batch normalization, ReLU, dropout
+0.3), global mean pooling over residues, then a small linear head. Edge weight is `exp(-d / 4 Å)`,
+so a residue's closest neighbours count for more than contacts at the edge of the 10 Å cutoff. The
+design follows the graph model I built for brain connectomes
+([GraphBRAIN](https://github.com/samnemati/GraphBRAIN)), so the comparison is about the data rather
+than about who tuned harder. The architecture and hyperparameters were fixed in advance and never
+tuned against the test folds.
 
 **Four variants, two matched pairs:**
 
