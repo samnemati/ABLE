@@ -186,8 +186,8 @@ holds up under grouping (AbLang2 0.49 to 0.47, ESM-2 0.32 to 0.31).
 sequence does not?
 
 **Predicted structures** ([able/structure.py](able/structure.py)). There are no experimental
-structures for most of these antibodies, so each Fv is predicted with ABodyBuilder2 (ImmuneBuilder;
-Abanades et al., 2023). It is an antibody-specific deep learning model built on the AlphaFold2
+structures for most of these antibodies, so each Fv is predicted with ABodyBuilder2 (part of the
+ImmuneBuilder package). It is an antibody-specific deep learning model built on the AlphaFold2
 structure module. It runs an ensemble of four models, and the spread between them is its
 per-residue error estimate. The model closest to the ensemble average is kept, and OpenMM refines
 it to remove steric clashes. All 137
@@ -215,7 +215,7 @@ happens to sit in the file. These graphs are the input for the graph neural netw
 
 **Surface features** ([able/surface.py](able/surface.py)). Solvent-accessible surface area
 (Shrake-Rupley) is computed per residue, and each residue is called exposed when its area is at
-least 25% of its theoretical maximum (Tien et al., 2013). Nine features summarize it:
+least 25% of its theoretical maximum for that residue type. Nine features summarize it:
 - total, hydrophobic, positive (K, R) and negative (D, E) surface area
 - the hydrophobic fraction of the surface
 - hydrophobic and positive surface area within the CDRs
@@ -365,12 +365,10 @@ GraphBRAIN work, where the best epoch was chosen on the same fold that was then 
 
 **Why this is the expected answer here, and what it is not.** A GNN has thousands of parameters and
 137 training graphs. Ridge regression on a frozen pretrained embedding has one hyperparameter and
-inherits what a language model learned from tens of millions of sequences. The same pattern is
-documented for brain connectomes: Han et al. (2025, "Rethinking Functional Brain Connectome
-Analysis: Do Graph Deep Learning Models Help?", arXiv:2501.17207) find that graph deep learning
-often fails to outperform simple baselines there, and a 2025 NeuroGraph follow-up
-(arXiv:2503.15902) found GNN accuracy on connectome benchmarks held up even with all edges removed,
-which is close to what the rewired control shows here.
+inherits what a language model learned from tens of millions of sequences. The same pattern has
+been reported for brain connectomes, where graph deep learning often fails to outperform simple
+baselines and accuracy can survive removing the edges entirely, which is close to what the rewired
+control shows here.
 
 This result does **not** say that antibody structure is uninformative. Stage 3 showed the opposite:
 surface features computed from the very same structures are the best predictor of HIC by a wide
