@@ -33,7 +33,7 @@ biophysical assays. Each antibody comes with its heavy-chain (VH) and light-chai
 variable-region sequence. The pipeline downloads a checksummed copy; source, license, contents
 and assay caveats are in [PROVENANCE.md](PROVENANCE.md).
 
-## Method so far
+## Method
 
 1. **Load** ([able/data.py](able/data.py)): download, verify SHA-256, rename the 12 assays to
    short names, and record for each assay whether higher values are better and whether it is a
@@ -47,7 +47,7 @@ and assay caveats are in [PROVENANCE.md](PROVENANCE.md).
    pH 7.4 (whole variable region and CDRs only), Kyte-Doolittle hydrophobicity (variable region,
    CDRs, CDR-H3), the six CDR lengths, and counts of chemical liability motifs inside the CDRs
    (N-glycosylation, deamidation, isomerization, methionine and tryptophan oxidation, cysteine).
-   These are the descriptors the learned representations in later stages have to beat.
+   These are the descriptors the learned representations below have to beat.
 
 All 137 antibodies number cleanly, with both chains assigned to the expected chain type.
 
@@ -80,18 +80,18 @@ long in every antibody here, so it is left out.
 
 ![Features vs assays](outputs/f_features_vs_assays.png)
 
-## Stage 2: protein language models
+## Protein language models
 
 **Question.** Do learned representations of the sequence predict developability better than the
-simple features from stage 1, once the evaluation stops close relatives from sitting in both
-training and test?
+baseline features, once the evaluation stops close relatives from sitting in both training and
+test?
 
 **Four representations of each antibody** ([able/encodings.py](able/encodings.py),
 [able/embeddings.py](able/embeddings.py)):
 
 | Representation | What it is | Dimensions |
 |---|---|---|
-| Baseline features | Stage 1: charge, hydrophobicity, CDR lengths, liability counts | 19 |
+| Baseline features | Charge, hydrophobicity, CDR lengths, liability counts | 19 |
 | One-hot (IMGT) | Each residue at each IMGT address, aligned across antibodies, gaps encoded | 5,292 |
 | ESM-2 650M | General protein language model; VH and VL embedded separately, mean-pooled, joined | 2,560 |
 | AbLang2 | Antibody language model trained on paired heavy and light chains | 480 |
@@ -180,7 +180,7 @@ holds up under grouping (AbLang2 0.49 to 0.47, ESM-2 0.32 to 0.31).
 - A nonlinear model, or fine-tuning the language models, could change the picture. Doing either
   safely would need far more than 137 antibodies.
 
-## Stage 3: structure
+## Predicted structure and surface features
 
 **Question.** Does the 3D shape of an antibody tell us anything about developability that its
 sequence does not?
@@ -192,7 +192,8 @@ structure module. It runs an ensemble of four models, and the spread between the
 per-residue error estimate. The model closest to the ensemble average is kept, and OpenMM refines
 it to remove steric clashes. All 137
 antibodies were predicted with no failures, in 11 minutes on a laptop. Each structure is checked
-against its input sequence residue by residue, and its IMGT numbering matches stage 1 exactly.
+against its input sequence residue by residue, and its IMGT numbering matches the sequence
+numbering exactly.
 
 ![Predicted error by region](outputs/f_stage3_error_by_region.png)
 
@@ -209,7 +210,7 @@ per residue (at its Cα atom), and an edge wherever two Cα atoms are within 10 
 
 Graphs have 220 to 238 nodes, about 2,070 undirected edges and a mean degree of 18.2. Distances do
 not change when a structure is rotated or moved, so the graph does not depend on how the molecule
-happens to sit in the file. These graphs are the input for the graph neural network in stage 4.
+happens to sit in the file. These graphs are the input for the graph neural network below.
 
 ![Contact map](outputs/f_stage3_contact_map.png)
 
@@ -225,16 +226,16 @@ least 25% of its theoretical maximum for that residue type. Nine features summar
 The area features sum over all residues; buried residues contribute almost nothing. The 25%
 threshold is used only for the two count features.
 
-They are evaluated with the stage 2 engine and the same identity groups. Each comparison is
-against the stage 1 sequence features, Holm-corrected across 8 comparisons.
+They are evaluated with the same engine and the same identity groups as everything else. Each
+comparison is against the baseline sequence features, Holm-corrected across 8 comparisons.
 
-![Stage 3 headline](outputs/f_stage3_headline.png)
+![Surface features vs sequence features](outputs/f_stage3_headline.png)
 
 **Results (grouped CV).**
 - **HIC: surface features predict it far better than anything so far.** All nine surface features
-  together reach rho = 0.53 (95% CI 0.42 to 0.64), against 0.15 for the stage 1 sequence features
-  (difference +0.39, adjusted p = 0.004) and 0.23 for AbLang2, the best stage 2 representation on
-  HIC (difference +0.31, adjusted p = 0.002 in a separate paired test). SMAC, the other
+  together reach rho = 0.53 (95% CI 0.42 to 0.64), against 0.15 for the baseline sequence features
+  (difference +0.39, adjusted p = 0.004) and 0.23 for AbLang2, the best sequence-based
+  representation on HIC (difference +0.31, adjusted p = 0.002 in a separate paired test). SMAC, the other
   hydrophobicity-related assay, follows (rho = 0.39).
 - **The signal is in charge as much as in hydrophobic surface.** An ablation on HIC
   ([`outputs/t_stage3_ablation.csv`](outputs/t_stage3_ablation.csv)) shows this:
@@ -245,13 +246,13 @@ against the stage 1 sequence features, Holm-corrected across 8 comparisons.
   | Charge surface features alone | 0.39 |
   | All nine surface features | 0.53 |
   | Sequence-only counts of K+R and D+E | 0.31 |
-  | Stage 1 features plus those counts | 0.26 |
+  | Baseline features plus those counts | 0.26 |
 
   The strongest single feature is positive surface area, which goes with shorter HIC retention
-  (rho = -0.43). The stage 1 features held net charge but not the number of charged residues.
+  (rho = -0.43). The baseline features held net charge but not the number of charged residues.
   Simply counting them gets HIC to 0.31 without any structure. The structure-based charge features
   are not significantly better than those counts (+0.08, p = 0.09). The full surface set is
-  (+0.27 over stage 1 plus counts, adjusted p = 0.002). The gain from structure comes from
+  (+0.27 over the baseline plus counts, adjusted p = 0.002). The gain from structure comes from
   combining where charged and hydrophobic residues sit on the surface, not from hydrophobic
   exposure alone.
 - **Self-interaction: structure alone is worse.** On AC-SINS, surface features score rho = -0.02,
@@ -259,7 +260,7 @@ against the stage 1 sequence features, Holm-corrected across 8 comparisons.
   two recovers most of the sequence-feature performance (0.19).
 - **Combining helps stability a little.** Sequence plus surface features improve Fab Tm over
   sequence features alone (+0.14, adjusted p = 0.012). At rho = 0.11, this is still far below the
-  language models in stage 2 (AbLang2, 0.47).
+  language models (AbLang2, 0.47).
 - **Combining is not always better.** On HIC, sequence plus surface (0.41) scores below surface
   alone (0.53). With about 110 training antibodies, extra weakly related features likely cost ridge
   more than they add.
@@ -279,7 +280,7 @@ families. The full tables are in
   were not tuned.
 
 
-## Stage 4: graph neural network
+## Graph neural network
 
 **Question.** Does a model that reads the whole residue graph beat the simpler representations that
 summarize it, and does the 3D wiring carry information beyond the residues themselves?
@@ -337,14 +338,14 @@ plain random graph. That matters because `GraphConv` sums over neighbours, so a 
 changed would see a different signal scale for a reason unrelated to wiring. About 90% of edges are
 replaced, and the control is redrawn for every repeat.
 
-**Training.** Grouped 5-fold cross-validation on the same identity groups as stages 2 and 3,
+**Training.** Grouped 5-fold cross-validation on the same identity groups as everywhere else,
 5 repeats. Inside each training fold, a further grouped 20% split is held out for early stopping
 (patience 20, at most 200 epochs; models stopped after 6 to 23 epochs on average, well short of the
 cap). Feature standardization and target z-scoring use training-fold statistics only. **Early
 stopping never sees the reported fold**, a deliberate fix of a methodological flaw in the earlier
 GraphBRAIN work, where the best epoch was chosen on the same fold that was then reported.
 
-![Stage 4 headline](outputs/f_stage4_headline.png)
+![Graph neural network results](outputs/f_stage4_headline.png)
 
 **Results (grouped CV, 16 comparisons, Holm-corrected together).**
 
@@ -370,17 +371,17 @@ been reported for brain connectomes, where graph deep learning often fails to ou
 baselines and accuracy can survive removing the edges entirely, which is close to what the rewired
 control shows here.
 
-This result does **not** say that antibody structure is uninformative. Stage 3 showed the opposite:
-surface features computed from the very same structures are the best predictor of HIC by a wide
+This result does **not** say that antibody structure is uninformative. The surface features showed
+the opposite: computed from the very same structures, they are the best predictor of HIC by a wide
 margin. What it says is narrower and more useful: **at this sample size, with this architecture, a
 GNN cannot extract from the contact graph what a few well-chosen structural summaries capture
 directly.** What would change the answer: more labelled molecules, pretraining the GNN on a large
 unlabelled structure set, or fine-tuning a structure-aware foundation model instead of training
 from scratch.
 
-## What the four stages say together
+## What it all says together
 
-![All stages](outputs/f_all_stages.png)
+![Every representation compared](outputs/f_all_stages.png)
 
 | Property | Best representation | rho | Why it makes sense |
 |---|---|---|---|
@@ -394,24 +395,14 @@ usually wins at this sample size. Two findings survive every control: structure-
 features for hydrophobicity, and antibody language model embeddings for stability. The most
 expensive model in the project, the graph neural network, wins nothing.
 
-The thread running through all four stages is methodological: identity-grouped splits, simple
-baselines reported beside complex models, an ablation when a result had an appealing story
-(stage 3), a matched control when a model could be exploiting something other than the intended
-signal (stage 4), and correction for multiple comparisons throughout. Everything is in
+The thread running through the whole project is methodological: identity-grouped splits, simple
+baselines reported beside complex models, an ablation when a result had an appealing story, a
+matched control when a model could be exploiting something other than the intended signal, and
+correction for multiple comparisons throughout. Everything is in
 [`outputs/t_all_stages.csv`](outputs/t_all_stages.csv).
 
-## Status
-
-All four stages are done.
-
-1. ~~Sequences: numbering, CDRs, baseline features, exploration.~~
-2. ~~Protein language models (ESM-2, AbLang2) with ridge regression, random vs grouped
-   cross-validation.~~
-3. ~~Predicted 3D structures, residue graphs and surface features.~~
-4. ~~Graph neural network on the residue graphs, with a shuffled-edge control.~~
-
-An optional later part would add an active learning simulation on mutational scanning data: how
-many measurements are needed if the model chooses which variants to test next.
+**A natural next step** would be an active learning simulation on mutational scanning data: how
+many lab measurements are needed if the model chooses which variants to test next.
 
 ## How to run
 
